@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 # Import the SQLAlchemy declarative Base and models
 from app.database import Base
-from app.models import User, KOL, Message, TradeSignal, RiskRule, Order  # Import all models
+from app.models.base import Channel, KOL, Message  # Import the models we need
 
 # Load environment variables
 load_dotenv()

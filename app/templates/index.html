@@ -3,118 +3,251 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Discord Message Manager</title>
+    <title>Discord Channel Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/vue-datetime/dist/vue-datetime.css" rel="stylesheet">
     <style>
-        .message-card {
-            margin-bottom: 1rem;
+        .channel-list, .message-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .channel-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        .channel-item:hover {
+            background-color: #f8f9fa;
+        }
+        .channel-item.active {
+            background-color: #e9ecef;
+        }
+        .message-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .message-header {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
         }
         .message-content {
             white-space: pre-wrap;
         }
-        .attachment-preview {
-            max-width: 200px;
-            max-height: 200px;
-            margin: 5px;
+        .message-time {
+            font-size: 0.8em;
+            color: #999;
         }
-        .referenced-message {
-            background-color: #f8f9fa;
-            padding: 10px;
-            margin: 5px 0;
-            border-left: 3px solid #6c757d;
+        .unread-badge {
+            background-color: #dc3545;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 0.8em;
+            margin-left: 8px;
+        }
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .log-entry {
+            padding: 4px;
+            border-bottom: 1px solid #f0f0f0;
+            white-space: pre-wrap;
+        }
+        .badge {
+            font-size: 0.8em;
         }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
 <body>
     {% raw %}
     <div id="app" class="container mt-4">
-        <h1 class="mb-4">Discord Message Manager</h1>
+        <h1>Discord Channel Manager</h1>
         
-        <!-- Message Filters -->
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Message Filters</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3">
-                        <input type="text" class="form-control" v-model="filters.channelId" placeholder="Channel ID">
-                    </div>
-                    <div class="col-md-3">
-                        <input type="text" class="form-control" v-model="filters.authorName" placeholder="Author Name">
-                    </div>
-                    <div class="col-md-3">
-                        <select class="form-control" v-model="filters.isReply">
-                            <option value="">All Messages</option>
-                            <option value="true">Replies Only</option>
-                            <option value="false">Non-replies Only</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <button class="btn btn-primary w-100" @click="loadMessages">Apply Filters</button>
-                    </div>
-                </div>
+        <div class="row mb-3">
+            <div class="col">
+                <button class="btn btn-primary" @click="syncChannels">Sync Channels</button>
             </div>
         </div>
 
-        <!-- Messages List -->
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Messages</h5>
-                <div class="btn-group">
-                    <button class="btn btn-sm btn-outline-primary" :disabled="page <= 1" @click="prevPage">Previous</button>
-                    <button class="btn btn-sm btn-outline-primary" @click="nextPage">Next</button>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Channels</h5>
+                            <input type="text" class="form-control w-50" v-model="channelSearch" placeholder="Search channels">
+                        </div>
+                    </div>
+                    <div class="card-body channel-list">
+                        <div v-for="channel in filteredChannels" 
+                             :key="channel.id" 
+                             class="channel-item"
+                             :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
+                             @click="selectChannel(channel)">
+                            <span>{{ channel.name }}</span>
+                            <span v-if="unreadCounts[channel.platform_channel_id]" class="unread-badge">
+                                {{ unreadCounts[channel.platform_channel_id] }}
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="card-body">
-                <div v-if="messages.length === 0" class="text-center py-4">
-                    No messages found
-                </div>
-                <div v-else class="list-group">
-                    <div v-for="message in messages" :key="message.id" class="list-group-item">
-                        <div class="d-flex justify-content-between align-items-start">
+
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Messages {{ selectedChannel ? '- ' + selectedChannel.name : '' }}</h5>
+                            <button v-if="selectedChannel" class="btn btn-sm btn-success" @click="showAddMessageForm = true">
+                                Add Message
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body message-list" @scroll="handleScroll">
+                        <div v-if="showAddMessageForm" class="mb-3 p-3 border rounded">
+                            <div class="mb-2">
+                                <label class="form-label">Message Content:</label>
+                                <textarea class="form-control" v-model="newMessage.content" rows="3"></textarea>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Author Name:</label>
+                                <input type="text" class="form-control" v-model="newMessage.author_name">
+                            </div>
                             <div>
-                                <h6 class="mb-1">{{ message.author_name }}</h6>
-                                <p class="mb-1">{{ message.content }}</p>
-                                <small class="text-muted">
-                                    Channel: {{ message.channel_id }} | 
-                                    Created: {{ new Date(message.created_at).toLocaleString() }}
-                                </small>
-                                <div v-if="message.referenced_message_id" class="mt-2 ps-3 border-start">
-                                    <small class="text-muted">Replying to message: {{ message.referenced_message_id }}</small>
-                                    <p class="mb-0">{{ message.referenced_content }}</p>
+                                <button class="btn btn-sm btn-primary me-2" @click="addMessage">Save</button>
+                                <button class="btn btn-sm btn-secondary" @click="cancelAddMessage">Cancel</button>
+                            </div>
+                        </div>
+                        <div v-if="!selectedChannel" class="text-center text-muted py-5">
+                            Select a channel to view messages
+                        </div>
+                        <div v-else-if="messages.length === 0" class="text-center text-muted py-5">
+                            No messages found
+                        </div>
+                        <template v-else>
+                            <div v-for="message in messages" :key="message.id" class="message-item">
+                                <div class="message-header d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>{{ message.author_name }}</strong>
+                                        <span class="message-time">{{ new Date(message.created_at).toLocaleString() }}</span>
+                                    </div>
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-danger" @click="deleteMessage(message.id)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="message-content">{{ message.content || '' }}</div>
+                                <!-- 添加附件显示 -->
+                                <div v-if="message.attachments && message.attachments !== '[]'" class="message-attachments mt-2">
+                                    <div v-for="attachment in parseJSON(message.attachments)" :key="attachment.id" class="attachment-item">
+                                        <!-- 图片附件 -->
+                                        <img v-if="attachment.content_type && attachment.content_type.startsWith('image/')"
+                                             :src="attachment.url"
+                                             :alt="attachment.filename"
+                                             class="img-fluid rounded"
+                                             style="max-height: 300px;">
+                                        <!-- 其他类型的附件 -->
+                                        <a v-else
+                                           :href="attachment.url"
+                                           target="_blank"
+                                           class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-download"></i> {{ attachment.filename }}
+                                        </a>
+                                    </div>
+                                </div>
+                                <!-- 添加嵌入内容显示 -->
+                                <div v-if="message.embeds && message.embeds !== '[]'" class="message-embeds mt-2">
+                                    <div v-for="embed in parseJSON(message.embeds)" :key="embed.id" class="embed-item border-start ps-3 mt-2">
+                                        <div v-if="embed.title" class="embed-title fw-bold">{{ embed.title }}</div>
+                                        <div v-if="embed.description" class="embed-description">{{ embed.description }}</div>
+                                        <img v-if="embed.image" :src="embed.image.url" class="img-fluid rounded mt-2" style="max-height: 300px;">
+                                        <img v-if="embed.thumbnail" :src="embed.thumbnail.url" class="img-fluid rounded mt-2" style="max-height: 150px;">
+                                    </div>
+                                </div>
+                                <div v-if="message.referenced_content" class="message-reference mt-2 ps-3 border-start">
+                                    <small class="text-muted">Replying to: {{ message.referenced_content }}</small>
                                 </div>
                             </div>
-                            <button class="btn btn-sm btn-danger" @click="deleteMessage(message.id)">Delete</button>
+                            <div v-if="loading" class="text-center py-3">
+                                Loading more messages...
+                            </div>
+                            <div v-if="!hasMore" class="text-center text-muted py-3">
+                                No more messages
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4 mt-3">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Blacklist</h5>
+                            <div class="input-group" style="width: 60%;">
+                                <input type="text" class="form-control form-control-sm" v-model="newBlacklistChannelId" placeholder="Channel ID">
+                                <button class="btn btn-sm btn-primary" @click="addToBlacklist(newBlacklistChannelId)">Add</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div v-for="item in blacklist" :key="item.channel_id" class="mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>Channel ID:</strong> {{ item.channel_id }}<br>
+                                    <small>{{ item.reason }}</small>
+                                </div>
+                                <button class="btn btn-sm btn-danger" @click="removeFromBlacklist(item.channel_id)">
+                                    Remove
+                                </button>
+                            </div>
+                            <hr>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Blacklist Management -->
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Channel Blacklist</h5>
-            </div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <div class="input-group">
-                        <input type="text" class="form-control" v-model="newBlacklistChannel" placeholder="Channel ID">
-                        <button class="btn btn-primary" @click="addToBlacklist">Add to Blacklist</button>
+        <div class="row">
+            <!-- 系统日志 -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        System Logs
+                        <button class="btn btn-sm btn-secondary float-end" @click="clearSystemLogs">Clear</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="log-container" ref="systemLogContainer">
+                            <div v-for="(log, index) in systemLogs" :key="index" class="log-entry">
+                                {{ log }}
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="list-group">
-                    <div v-for="item in blacklist" :key="item.channel_id" class="list-group-item d-flex justify-content-between align-items-center">
-                        <div>
-                            <h6 class="mb-1">Channel: {{ item.channel_id }}</h6>
-                            <small class="text-muted">Reason: {{ item.reason }}</small><br>
-                            <small class="text-muted">Since: {{ new Date(item.timestamp).toLocaleString() }}</small>
+            </div>
+
+            <!-- 消息日志 -->
+            <div class="col-md-9">
+                <div class="card">
+                    <div class="card-header">
+                        Message Logs
+                        <button class="btn btn-sm btn-secondary float-end" @click="clearMessageLogs">Clear</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="log-container" ref="messageLogContainer">
+                            <div v-for="(log, index) in messageLogs" :key="index" class="log-entry">
+                                <span class="badge bg-primary me-2">{{ log.channel }}</span>
+                                <span class="badge bg-secondary me-2">{{ log.author }}</span>
+                                {{ log.content }}
+                            </div>
                         </div>
-                        <button class="btn btn-sm btn-warning" @click="removeFromBlacklist(item.channel_id)">Remove</button>
                     </div>
                 </div>
             </div>
@@ -122,89 +255,322 @@
     </div>
     {% endraw %}
 
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script>
         new Vue({
             el: '#app',
             data: {
-                messages: [],
+                channels: [],
                 blacklist: [],
-                filters: {
-                    channelId: '',
-                    authorName: '',
-                    isReply: ''
+                channelSearch: '',
+                newBlacklistChannelId: '',
+                selectedChannel: null,
+                messages: [],
+                showAddMessageForm: false,
+                newMessage: {
+                    content: '',
+                    author_name: ''
                 },
-                page: 1,
-                newBlacklistChannel: ''
+                unreadCounts: {},
+                lastMessageTimes: {},
+                messageCheckInterval: null,
+                systemLogs: [],
+                messageLogs: [],
+                searchQuery: '',
+                ws: null,
+                currentPage: 1,
+                pageSize: 20,
+                loading: false,
+                hasMore: true
+            },
+            computed: {
+                filteredChannels() {
+                    if (!this.channelSearch) {
+                        return this.channels;
+                    }
+                    const query = this.channelSearch.toLowerCase();
+                    return this.channels.filter(channel => 
+                        channel.name.toLowerCase().includes(query)
+                    );
+                }
             },
             methods: {
-                async loadMessages() {
+                parseJSON(str) {
+                    if (!str) return [];
+                    if (typeof str === 'object') return str;  // 如果已经是对象，直接返回
                     try {
-                        const response = await axios.get('/api/messages', {
-                            params: {
-                                ...this.filters,
-                                page: this.page
-                            }
-                        });
-                        this.messages = response.data;
-                    } catch (error) {
-                        alert('Error loading messages');
-                        console.error(error);
+                        return JSON.parse(str);
+                    } catch (e) {
+                        console.error('Error parsing JSON:', e);
+                        return [];
                     }
                 },
-                async deleteMessage(messageId) {
-                    if (!confirm('Are you sure you want to delete this message?')) return;
+                async loadMessages(channel, loadMore = false) {
+                    if (this.loading) return;
+                    
                     try {
-                        await axios.delete(`/api/messages/${messageId}`);
-                        await this.loadMessages();
+                        this.loading = true;
+                        const page = loadMore ? this.currentPage + 1 : 1;
+                        console.log('Loading messages for channel:', channel.platform_channel_id, 'page:', page); // Debug log
+                        
+                        const response = await fetch(`/api/messages?channel_id=${channel.platform_channel_id}&page=${page}&limit=${this.pageSize}`);
+                        const data = await response.json();
+                        console.log('Response data:', data); // Debug log
+                        
+                        if (response.ok && data.messages) {
+                            if (loadMore) {
+                                this.messages = [...this.messages, ...data.messages];
+                                this.currentPage = page;
+                            } else {
+                                this.messages = data.messages;
+                                this.currentPage = 1;
+                            }
+                            this.hasMore = data.has_more;
+                            console.log('Updated messages:', this.messages); // Debug log
+                        } else {
+                            console.error('Invalid response format:', data);
+                        }
                     } catch (error) {
-                        alert('Error deleting message');
-                        console.error(error);
+                        console.error('Error loading messages:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                handleScroll(e) {
+                    const element = e.target;
+                    if (this.hasMore && !this.loading && 
+                        element.scrollHeight - element.scrollTop <= element.clientHeight + 100) {
+                        this.loadMessages(this.selectedChannel, true);
+                    }
+                },
+                initWebSocket() {
+                    this.ws = new WebSocket(`ws://${window.location.host}/ws`);
+                    
+                    this.ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        console.log('WebSocket message:', data);  // Debug log
+                        
+                        if (data.type === 'system') {
+                            this.addSystemLog(data.content);
+                        } else if (data.type === 'new_message') {
+                            const channelId = data.channel_id;
+                            
+                            // 添加到消息日志
+                            this.addMessageLog({
+                                channel: data.channel_name || 'Unknown Channel',
+                                author: data.author_name,
+                                content: data.content
+                            });
+
+                            // 更新未读消息计数
+                            if (channelId) {
+                                if (!this.unreadCounts[channelId]) {
+                                    this.unreadCounts[channelId] = 0;
+                                }
+                                if (!this.selectedChannel || this.selectedChannel.platform_channel_id !== channelId) {
+                                    this.unreadCounts[channelId]++;
+                                    this.$set(this.unreadCounts, channelId, this.unreadCounts[channelId]);
+                                }
+                            }
+
+                            // 如果是当前选中的频道，刷新消息列表
+                            if (this.selectedChannel && channelId === this.selectedChannel.platform_channel_id) {
+                                this.loadMessages(this.selectedChannel);
+                            }
+                        }
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket connection closed');
+                        setTimeout(() => this.initWebSocket(), 1000);
+                    };
+                },
+                async loadChannels() {
+                    try {
+                        const response = await fetch('/api/channels');
+                        if (response.ok) {
+                            this.channels = await response.json();
+                            this.addSystemLog('已加载 ' + this.channels.length + ' 个频道');
+                            // 初始化每个频道的最后消息时间
+                            this.channels.forEach(channel => {
+                                if (!this.lastMessageTimes[channel.platform_channel_id]) {
+                                    this.lastMessageTimes[channel.platform_channel_id] = new Date().toISOString();
+                                }
+                            });
+                        }
+                    } catch (error) {
+                        this.addSystemLog('加载频道失败: ' + error.message);
                     }
                 },
                 async loadBlacklist() {
                     try {
-                        const response = await axios.get('/api/blacklist');
-                        this.blacklist = response.data;
+                        const response = await fetch('/api/blacklist');
+                        if (response.ok) {
+                            this.blacklist = await response.json();
+                        }
                     } catch (error) {
-                        alert('Error loading blacklist');
-                        console.error(error);
+                        console.error('Error loading blacklist:', error);
                     }
                 },
-                async addToBlacklist() {
-                    if (!this.newBlacklistChannel) return;
+                async syncChannels() {
                     try {
-                        await axios.post(`/api/blacklist/${this.newBlacklistChannel}`);
-                        this.newBlacklistChannel = '';
-                        await this.loadBlacklist();
+                        const response = await fetch('/api/channels/sync', { method: 'POST' });
+                        if (response.ok) {
+                            this.addSystemLog('频道同步成功');
+                            await this.loadChannels();
+                        } else {
+                            this.addSystemLog('频道同步失败: ' + await response.text());
+                        }
                     } catch (error) {
-                        alert('Error adding channel to blacklist');
-                        console.error(error);
+                        this.addSystemLog('频道同步出错: ' + error.message);
+                    }
+                },
+                async selectChannel(channel) {
+                    console.log('Selecting channel:', channel);  // Debug log
+                    this.selectedChannel = channel;
+                    this.messages = [];  // 清空当前消息
+                    this.currentPage = 1;  // 重置页码
+                    this.hasMore = true;  // 重置加载状态
+                    this.updateUnreadCount(channel.platform_channel_id, 0);
+                    
+                    // 确保channel对象包含必要的信息
+                    if (!channel.platform_channel_id) {
+                        console.error('Invalid channel object:', channel);
+                        return;
+                    }
+                    
+                    await this.loadMessages(channel);
+                },
+                async addToBlacklist(channelId) {
+                    if (!channelId) {
+                        alert('Please enter a channel ID');
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/blacklist/${channelId}`, {
+                            method: 'POST'
+                        });
+                        if (response.ok) {
+                            await this.loadBlacklist();
+                            this.newBlacklistChannelId = '';
+                        } else {
+                            alert('Failed to add to blacklist');
+                        }
+                    } catch (error) {
+                        console.error('Error adding to blacklist:', error);
+                        alert('Error adding to blacklist');
                     }
                 },
                 async removeFromBlacklist(channelId) {
-                    if (!confirm('Are you sure you want to remove this channel from the blacklist?')) return;
                     try {
-                        await axios.delete(`/api/blacklist/${channelId}`);
-                        await this.loadBlacklist();
+                        const response = await fetch(`/api/blacklist/${channelId}`, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            await this.loadBlacklist();
+                        } else {
+                            alert('Failed to remove from blacklist');
+                        }
                     } catch (error) {
-                        alert('Error removing channel from blacklist');
-                        console.error(error);
+                        console.error('Error removing from blacklist:', error);
+                        alert('Error removing from blacklist');
                     }
                 },
-                prevPage() {
-                    if (this.page > 1) {
-                        this.page--;
-                        this.loadMessages();
+                async addMessage() {
+                    if (!this.newMessage.content || !this.newMessage.author_name) {
+                        alert('Please fill in all fields');
+                        return;
+                    }
+                    try {
+                        const response = await fetch('/api/messages', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                content: this.newMessage.content,
+                                author_name: this.newMessage.author_name,
+                                channel_id: this.selectedChannel.platform_channel_id
+                            })
+                        });
+                        if (response.ok) {
+                            // 重新加载消息
+                            await this.selectChannel(this.selectedChannel);
+                            this.showAddMessageForm = false;
+                            this.newMessage.content = '';
+                            this.newMessage.author_name = '';
+                        } else {
+                            alert('Failed to add message');
+                        }
+                    } catch (error) {
+                        console.error('Error adding message:', error);
+                        alert('Error adding message');
                     }
                 },
-                nextPage() {
-                    this.page++;
-                    this.loadMessages();
+                cancelAddMessage() {
+                    this.showAddMessageForm = false;
+                    this.newMessage.content = '';
+                    this.newMessage.author_name = '';
+                },
+                async deleteMessage(messageId) {
+                    if (!confirm('Are you sure you want to delete this message?')) {
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/messages/${messageId}`, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            // 重新加载消息
+                            await this.selectChannel(this.selectedChannel);
+                        } else {
+                            alert('Failed to delete message');
+                        }
+                    } catch (error) {
+                        console.error('Error deleting message:', error);
+                        alert('Error deleting message');
+                    }
+                },
+                addSystemLog(log) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    this.systemLogs.push(`[${timestamp}] ${log}`);
+                    this.$nextTick(() => {
+                        if (this.$refs.systemLogContainer) {
+                            this.$refs.systemLogContainer.scrollTop = this.$refs.systemLogContainer.scrollHeight;
+                        }
+                    });
+                },
+                addMessageLog(message) {
+                    this.messageLogs.unshift(message);
+                    // Keep only the last 100 messages
+                    if (this.messageLogs.length > 100) {
+                        this.messageLogs.pop();
+                    }
+                },
+                updateUnreadCount(channelId, count) {
+                    this.$set(this.unreadCounts, channelId, count);
+                },
+                clearSystemLogs() {
+                    this.systemLogs = [];
+                },
+                clearMessageLogs() {
+                    this.messageLogs = [];
                 }
             },
-            mounted() {
-                this.loadMessages();
-                this.loadBlacklist();
+            async mounted() {
+                await this.loadChannels();
+                await this.loadBlacklist();
+                this.initWebSocket();
+                this.messageCheckInterval = setInterval(this.checkNewMessages, 10000);
+            },
+            beforeDestroy() {
+                if (this.messageCheckInterval) {
+                    clearInterval(this.messageCheckInterval);
+                }
+                if (this.ws) {
+                    this.ws.close();
+                }
             }
         });
     </script>
