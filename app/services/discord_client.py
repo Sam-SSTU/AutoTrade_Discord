@@ -207,6 +207,7 @@ class DiscordClient:
                 for guild in guilds:
                     guild_id = guild['id']
                     guild_name = guild['name']
+                    message_logger.info(f"正在处理服务器: {guild_name}")
                     
                     # 获取服务器中的所有频道
                     async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels') as channels_response:
@@ -215,16 +216,15 @@ class DiscordClient:
                             continue
                             
                         channels = await channels_response.json()
-                        message_logger.info(f"服务器 {guild_name} 中发现 {len(channels)} 个频道")
+                        text_channels = [c for c in channels if c.get('type') == 0]
+                        message_logger.info(f"服务器 {guild_name} 中发现 {len(text_channels)} 个文字频道")
                         
-                        for channel_data in channels:
+                        for channel_data in text_channels:
                             try:
-                                # 只处理文字频道
-                                if channel_data.get('type') != 0:  # 0 表示文字频道
-                                    continue
-                                    
                                 channel_id = channel_data.get('id')
                                 channel_name = channel_data.get('name', '未知频道')
+                                
+                                message_logger.info(f"正在检查频道权限: {channel_name}")
                                 
                                 # 检查频道权限
                                 has_access = await self._check_channel_access(channel_id)
@@ -249,12 +249,15 @@ class DiscordClient:
                                         message_logger.info(f"添加无权限频道: {channel_name}")
                                 else:
                                     # 更新频道状态
-                                    if channel.is_active != has_access:
-                                        channel.is_active = has_access
+                                    old_status = channel.is_active
+                                    channel.is_active = has_access
+                                    if old_status != has_access:
                                         if has_access:
-                                            message_logger.info(f"重新激活频道: {channel_name}")
+                                            message_logger.info(f"频道已重新激活: {channel_name}")
                                         else:
-                                            message_logger.info(f"标记无权限频道: {channel_name}")
+                                            message_logger.info(f"频道已失去权限: {channel_name}")
+                                    else:
+                                        message_logger.info(f"频道状态未变: {channel_name} ({'有权限' if has_access else '无权限'})")
                                             
                                 if has_access:
                                     accessible_count += 1

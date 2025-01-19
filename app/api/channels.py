@@ -1,14 +1,16 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+import logging
 
 from ..database import SessionLocal, get_db
-from ..models.base import Channel, KOL, KOLCategory
+from ..models.base import Channel, KOL, KOLCategory, Message
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
 discord_client = DiscordClient()
+message_logger = logging.getLogger("Message Logs")
 
 def get_db():
     db = SessionLocal()
@@ -127,4 +129,37 @@ async def update_channel_category(
         db.commit()
         return {"message": "Channel category updated successfully"}
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid category") 
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+@router.post("/channels/reset", response_model=Dict[str, Any])
+async def reset_channels(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """清除所有频道并重新同步"""
+    try:
+        # 删除所有频道相关的消息
+        db.query(Message).delete()
+        # 删除所有频道
+        db.query(Channel).delete()
+        db.commit()
+        
+        message_logger.info("已清除所有频道和相关消息")
+        
+        # 同步频道
+        result = await discord_client.sync_channels_to_db(db)
+        
+        message_logger.info(f"频道重置完成: {result['accessible_count']} 个可访问, {result['inaccessible_count']} 个无权限")
+        
+        return {
+            "message": "频道重置成功",
+            "accessible_count": result["accessible_count"],
+            "inaccessible_count": result["inaccessible_count"]
+        }
+    except Exception as e:
+        db.rollback()
+        message_logger.error(f"重置频道失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"重置频道失败: {str(e)}"
+        ) 
