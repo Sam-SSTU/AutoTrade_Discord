@@ -69,12 +69,6 @@
     <div id="app" class="container mt-4">
         <h1>Discord Channel Manager</h1>
         
-        <div class="row mb-3">
-            <div class="col">
-                <button class="btn btn-primary" @click="syncChannels">Sync Channels</button>
-            </div>
-        </div>
-
         <div class="row">
             <div class="col-md-4">
                 <div class="card">
@@ -185,34 +179,6 @@
                     </div>
                 </div>
             </div>
-
-            <div class="col-md-4 mt-3">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">Blacklist</h5>
-                            <div class="input-group" style="width: 60%;">
-                                <input type="text" class="form-control form-control-sm" v-model="newBlacklistChannelId" placeholder="Channel ID">
-                                <button class="btn btn-sm btn-primary" @click="addToBlacklist(newBlacklistChannelId)">Add</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div v-for="item in blacklist" :key="item.channel_id" class="mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong>Channel ID:</strong> {{ item.channel_id }}<br>
-                                    <small>{{ item.reason }}</small>
-                                </div>
-                                <button class="btn btn-sm btn-danger" @click="removeFromBlacklist(item.channel_id)">
-                                    Remove
-                                </button>
-                            </div>
-                            <hr>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <div class="row">
@@ -262,9 +228,7 @@
             el: '#app',
             data: {
                 channels: [],
-                blacklist: [],
                 channelSearch: '',
-                newBlacklistChannelId: '',
                 selectedChannel: null,
                 messages: [],
                 showAddMessageForm: false,
@@ -312,11 +276,9 @@
                     try {
                         this.loading = true;
                         const page = loadMore ? this.currentPage + 1 : 1;
-                        console.log('Loading messages for channel:', channel.platform_channel_id, 'page:', page); // Debug log
                         
                         const response = await fetch(`/api/messages?channel_id=${channel.platform_channel_id}&page=${page}&limit=${this.pageSize}`);
                         const data = await response.json();
-                        console.log('Response data:', data); // Debug log
                         
                         if (response.ok && data.messages) {
                             if (loadMore) {
@@ -327,12 +289,24 @@
                                 this.currentPage = 1;
                             }
                             this.hasMore = data.has_more;
-                            console.log('Updated messages:', this.messages); // Debug log
+                            this.addMessageLog({
+                                channel: channel.name,
+                                author: 'System',
+                                content: `加载了${data.messages.length}条消息`
+                            });
                         } else {
-                            console.error('Invalid response format:', data);
+                            this.addMessageLog({
+                                channel: channel.name,
+                                author: 'System',
+                                content: '加载消息失败'
+                            });
                         }
                     } catch (error) {
-                        console.error('Error loading messages:', error);
+                        this.addMessageLog({
+                            channel: this.selectedChannel?.name || 'Unknown',
+                            author: 'System',
+                            content: '加载消息出错: ' + error.message
+                        });
                     } finally {
                         this.loading = false;
                     }
@@ -349,10 +323,14 @@
                     
                     this.ws.onmessage = (event) => {
                         const data = JSON.parse(event.data);
-                        console.log('WebSocket message:', data);  // Debug log
                         
                         if (data.type === 'system') {
-                            this.addSystemLog(data.content);
+                            // 将系统消息也添加到消息日志中
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: data.content
+                            });
                         } else if (data.type === 'new_message') {
                             const channelId = data.channel_id;
                             
@@ -382,7 +360,11 @@
                     };
                     
                     this.ws.onclose = () => {
-                        console.log('WebSocket connection closed');
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: 'WebSocket连接已断开，正在重新连接...'
+                        });
                         setTimeout(() => this.initWebSocket(), 1000);
                     };
                 },
@@ -391,7 +373,11 @@
                         const response = await fetch('/api/channels');
                         if (response.ok) {
                             this.channels = await response.json();
-                            this.addSystemLog('已加载 ' + this.channels.length + ' 个频道');
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: '已加载 ' + this.channels.length + ' 个频道'
+                            });
                             // 初始化每个频道的最后消息时间
                             this.channels.forEach(channel => {
                                 if (!this.lastMessageTimes[channel.platform_channel_id]) {
@@ -400,34 +386,15 @@
                             });
                         }
                     } catch (error) {
-                        this.addSystemLog('加载频道失败: ' + error.message);
-                    }
-                },
-                async loadBlacklist() {
-                    try {
-                        const response = await fetch('/api/blacklist');
-                        if (response.ok) {
-                            this.blacklist = await response.json();
-                        }
-                    } catch (error) {
-                        console.error('Error loading blacklist:', error);
-                    }
-                },
-                async syncChannels() {
-                    try {
-                        const response = await fetch('/api/channels/sync', { method: 'POST' });
-                        if (response.ok) {
-                            this.addSystemLog('频道同步成功');
-                            await this.loadChannels();
-                        } else {
-                            this.addSystemLog('频道同步失败: ' + await response.text());
-                        }
-                    } catch (error) {
-                        this.addSystemLog('频道同步出错: ' + error.message);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '加载频道失败: ' + error.message
+                        });
                     }
                 },
                 async selectChannel(channel) {
-                    console.log('Selecting channel:', channel);  // Debug log
+                    console.log('Selecting channel:', channel);
                     this.selectedChannel = channel;
                     this.messages = [];  // 清空当前消息
                     this.currentPage = 1;  // 重置页码
@@ -436,46 +403,15 @@
                     
                     // 确保channel对象包含必要的信息
                     if (!channel.platform_channel_id) {
-                        console.error('Invalid channel object:', channel);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '无效的频道信息'
+                        });
                         return;
                     }
                     
                     await this.loadMessages(channel);
-                },
-                async addToBlacklist(channelId) {
-                    if (!channelId) {
-                        alert('Please enter a channel ID');
-                        return;
-                    }
-                    try {
-                        const response = await fetch(`/api/blacklist/${channelId}`, {
-                            method: 'POST'
-                        });
-                        if (response.ok) {
-                            await this.loadBlacklist();
-                            this.newBlacklistChannelId = '';
-                        } else {
-                            alert('Failed to add to blacklist');
-                        }
-                    } catch (error) {
-                        console.error('Error adding to blacklist:', error);
-                        alert('Error adding to blacklist');
-                    }
-                },
-                async removeFromBlacklist(channelId) {
-                    try {
-                        const response = await fetch(`/api/blacklist/${channelId}`, {
-                            method: 'DELETE'
-                        });
-                        if (response.ok) {
-                            await this.loadBlacklist();
-                        } else {
-                            alert('Failed to remove from blacklist');
-                        }
-                    } catch (error) {
-                        console.error('Error removing from blacklist:', error);
-                        alert('Error removing from blacklist');
-                    }
                 },
                 async addMessage() {
                     if (!this.newMessage.content || !this.newMessage.author_name) {
@@ -500,12 +436,24 @@
                             this.showAddMessageForm = false;
                             this.newMessage.content = '';
                             this.newMessage.author_name = '';
+                            this.addMessageLog({
+                                channel: this.selectedChannel.name,
+                                author: 'System',
+                                content: '消息发送成功'
+                            });
                         } else {
-                            alert('Failed to add message');
+                            this.addMessageLog({
+                                channel: this.selectedChannel.name,
+                                author: 'System',
+                                content: '发送消息失败'
+                            });
                         }
                     } catch (error) {
-                        console.error('Error adding message:', error);
-                        alert('Error adding message');
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '发送消息出错: ' + error.message
+                        });
                     }
                 },
                 cancelAddMessage() {
@@ -524,12 +472,24 @@
                         if (response.ok) {
                             // 重新加载消息
                             await this.selectChannel(this.selectedChannel);
+                            this.addMessageLog({
+                                channel: this.selectedChannel.name,
+                                author: 'System',
+                                content: '消息删除成功'
+                            });
                         } else {
-                            alert('Failed to delete message');
+                            this.addMessageLog({
+                                channel: this.selectedChannel.name,
+                                author: 'System',
+                                content: '删除消息失败'
+                            });
                         }
                     } catch (error) {
-                        console.error('Error deleting message:', error);
-                        alert('Error deleting message');
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '删除消息出错: ' + error.message
+                        });
                     }
                 },
                 addSystemLog(log) {
@@ -560,7 +520,6 @@
             },
             async mounted() {
                 await this.loadChannels();
-                await this.loadBlacklist();
                 this.initWebSocket();
                 this.messageCheckInterval = setInterval(this.checkNewMessages, 10000);
             },

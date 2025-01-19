@@ -32,45 +32,37 @@ active_connections: List[WebSocket] = []
 
 async def broadcast_log(log_entry: str):
     """广播日志消息到所有连接的客户端"""
-    # 解析消息内容
-    message_type = "system"
-    message_data = {
-        "type": message_type,
-        "content": log_entry
-    }
-
-    # 如果是新消息通知，提取更多信息
-    if "消息" in log_entry and "来自" in log_entry and "添加成功" in log_entry:
-        try:
-            # 解析消息ID、作者和频道ID
-            parts = log_entry.split(" - ")[0].split("来自")
-            message_id = parts[0].split("消息")[-1].strip()
-            author = parts[1].strip()
+    try:
+        # 解析消息日志
+        if "发了消息:" in log_entry:
+            # 解析用户发送的消息
+            parts = log_entry.split("发了消息:")
+            author = parts[0].strip()
+            content = parts[1].strip()
             
-            # 从日志中提取频道ID（假设格式为 "channel_id: xxx"）
-            channel_id = None
-            if "channel_id:" in log_entry:
-                channel_id = log_entry.split("channel_id:")[1].split()[0].strip()
-            
-            message_type = "new_message"
             message_data = {
-                "type": message_type,
-                "message_id": message_id,
-                "author": author,
-                "channel_id": channel_id,
-                "content": log_entry,
-                "created_at": datetime.now().isoformat()
+                "type": "new_message",
+                "channel_name": "Message Logs",
+                "author_name": author,
+                "content": content,
+                "timestamp": datetime.now().isoformat()
             }
-            logger.info(f"Broadcasting new message: {message_data}")
-        except Exception as e:
-            logger.error(f"Error parsing message log: {e}")
-    
-    # 发送到所有连接的客户端
-    for connection in active_connections:
-        try:
-            await connection.send_text(json.dumps(message_data))
-        except Exception as e:
-            logger.error(f"Error sending log to client: {e}")
+        else:
+            # 其他系统消息
+            message_data = {
+                "type": "system",
+                "content": log_entry
+            }
+
+        # 发送到所有连接的客户端
+        for connection in active_connections:
+            try:
+                await connection.send_text(json.dumps(message_data))
+            except Exception as e:
+                logger.error(f"Error sending log to client: {e}")
+                
+    except Exception as e:
+        logger.error(f"Error in broadcast_log: {e}")
 
 class AsyncWebSocketLogHandler(logging.Handler):
     def emit(self, record):
@@ -86,7 +78,8 @@ class AsyncWebSocketLogHandler(logging.Handler):
 # 配置WebSocket日志处理器
 websocket_handler = AsyncWebSocketLogHandler()
 websocket_handler.setFormatter(logging.Formatter('%(message)s'))
-logging.getLogger('app.services.discord_client').addHandler(websocket_handler)
+# 添加到Message Logs记录器
+logging.getLogger('Message Logs').addHandler(websocket_handler)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
