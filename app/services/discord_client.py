@@ -189,42 +189,117 @@ class DiscordClient:
             return {}
 
     async def sync_channels_to_db(self, db: Session):
-        """同步频道信息到数据库"""
+        """同步频道信息到数据库，检查权限并标记不可访问的频道"""
         try:
             await self._create_session()
-            async with self.session.get('https://discord.com/api/v9/users/@me/channels') as response:
-                if response.status == 200:
-                    channels_data = await response.json()
-                    message_logger.info(f"同步频道信息: 共{len(channels_data)}个频道")
+            accessible_count = 0
+            inaccessible_count = 0
+            
+            # 获取用户所在的所有服务器
+            async with self.session.get('https://discord.com/api/v9/users/@me/guilds') as response:
+                if response.status != 200:
+                    message_logger.error("获取服务器列表失败")
+                    raise Exception("Failed to fetch guilds")
                     
-                    for channel_data in channels_data:
-                        channel_id = channel_data.get('id')
-                        channel_name = channel_data.get('name', '未知频道')
+                guilds = await response.json()
+                message_logger.info(f"发现 {len(guilds)} 个服务器")
+                
+                for guild in guilds:
+                    guild_id = guild['id']
+                    guild_name = guild['name']
+                    
+                    # 获取服务器中的所有频道
+                    async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels') as channels_response:
+                        if channels_response.status != 200:
+                            message_logger.error(f"获取服务器 {guild_name} 的频道列表失败")
+                            continue
+                            
+                        channels = await channels_response.json()
+                        message_logger.info(f"服务器 {guild_name} 中发现 {len(channels)} 个频道")
                         
-                        # 检查频道是否已存在
-                        channel = db.query(Channel).filter(
-                            Channel.platform_channel_id == str(channel_id)
-                        ).first()
-                        
-                        if not channel:
-                            channel = Channel(
-                                platform_channel_id=str(channel_id),
-                                name=channel_name,
-                                guild_id=str(channel_data.get('guild_id', '0')),
-                                guild_name=channel_data.get('guild_name', 'Unknown'),
-                                is_active=True
-                            )
-                            db.add(channel)
-                            message_logger.info(f"添加新频道: {channel_name}")
-                        
-                    db.commit()
-                    message_logger.info("频道同步完成")
-                else:
-                    message_logger.error("同步频道信息失败")
+                        for channel_data in channels:
+                            try:
+                                # 只处理文字频道
+                                if channel_data.get('type') != 0:  # 0 表示文字频道
+                                    continue
+                                    
+                                channel_id = channel_data.get('id')
+                                channel_name = channel_data.get('name', '未知频道')
+                                
+                                # 检查频道权限
+                                has_access = await self._check_channel_access(channel_id)
+                                
+                                # 检查频道是否已存在
+                                channel = db.query(Channel).filter(
+                                    Channel.platform_channel_id == str(channel_id)
+                                ).first()
+                                
+                                if not channel:
+                                    channel = Channel(
+                                        platform_channel_id=str(channel_id),
+                                        name=channel_name,
+                                        guild_id=str(guild_id),
+                                        guild_name=guild_name,
+                                        is_active=has_access
+                                    )
+                                    db.add(channel)
+                                    if has_access:
+                                        message_logger.info(f"添加新频道: {channel_name}")
+                                    else:
+                                        message_logger.info(f"添加无权限频道: {channel_name}")
+                                else:
+                                    # 更新频道状态
+                                    if channel.is_active != has_access:
+                                        channel.is_active = has_access
+                                        if has_access:
+                                            message_logger.info(f"重新激活频道: {channel_name}")
+                                        else:
+                                            message_logger.info(f"标记无权限频道: {channel_name}")
+                                            
+                                if has_access:
+                                    accessible_count += 1
+                                else:
+                                    inaccessible_count += 1
+                                
+                                # 立即提交每个频道的更改
+                                db.commit()
+                                
+                            except Exception as e:
+                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}")
+                                db.rollback()
+                                continue
+                    
+                    # 每个服务器处理完后等待一下，避免触发限制
+                    await asyncio.sleep(1)
+                
+                message_logger.info(f"频道同步完成: {accessible_count} 个可访问, {inaccessible_count} 个无权限")
+                return {
+                    "accessible_count": accessible_count,
+                    "inaccessible_count": inaccessible_count
+                }
+                
         except Exception as e:
-            message_logger.error("同步频道信息出错")
+            message_logger.error(f"同步频道信息出错: {str(e)}")
             db.rollback()
             raise
+
+    async def _check_channel_access(self, channel_id: str) -> bool:
+        """检查是否有权限访问频道"""
+        try:
+            # 尝试获取频道的一条消息来测试权限
+            async with self.session.get(
+                f'https://discord.com/api/v9/channels/{channel_id}/messages',
+                params={'limit': 1}
+            ) as response:
+                if response.status == 200:
+                    return True
+                elif response.status in [403, 401] or (await response.json()).get('code') == 50001:
+                    return False
+                else:
+                    # 其他错误视为无权限
+                    return False
+        except Exception:
+            return False
 
     async def store_message(self, message_data: Dict[str, Any], db: Session):
         """存储消息到数据库"""
@@ -235,6 +310,15 @@ class DiscordClient:
             content = message_data.get('content', '')
             author = message_data.get('author', {})
             username = f"{author.get('username')}#{author.get('discriminator')}"
+            
+            # 检查消息是否已存在
+            existing_message = db.query(Message).filter(
+                Message.platform_message_id == str(message_id)
+            ).first()
+            
+            if existing_message:
+                message_logger.info(f"消息已存在，跳过: {message_id}")
+                return
             
             # 获取或创建KOL记录
             kol = db.query(KOL).filter(
@@ -263,15 +347,15 @@ class DiscordClient:
             
             # 创建消息记录
             message = Message(
-                platform_message_id=message_id,
-                channel_id=channel.id,  # 使用channels表的id而不是Discord的channel_id
+                platform_message_id=str(message_id),  # 确保转换为字符串
+                channel_id=channel.id,
                 kol_id=kol.id,
                 content=content,
                 attachments=json.dumps(message_data.get('attachments', [])),
                 embeds=json.dumps(message_data.get('embeds', [])),
-                referenced_message_id=message_data.get('referenced_message', {}).get('id'),
+                referenced_message_id=str(message_data.get('referenced_message', {}).get('id')) if message_data.get('referenced_message', {}).get('id') else None,
                 referenced_content=message_data.get('referenced_message', {}).get('content'),
-                created_at=datetime.now(timezone.utc)
+                created_at=datetime.fromisoformat(message_data.get('timestamp').rstrip('Z')).replace(tzinfo=timezone.utc)
             )
             
             db.add(message)
@@ -280,26 +364,53 @@ class DiscordClient:
             message_logger.info(f"{username}发了消息: {content or '[空消息]'}")
             
         except Exception as e:
-            message_logger.error("存储消息时出错")
+            message_logger.error(f"存储消息时出错: {str(e)}")
+            db.rollback()
             raise
 
     async def get_channel_messages(self, channel_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """获取频道的历史消息"""
+        """获取频道的历史消息，支持分页"""
+        all_messages = []
+        before_id = None
+        
         try:
             await self._create_session()
-            async with self.session.get(
-                f'https://discord.com/api/v9/channels/{channel_id}/messages',
-                params={'limit': limit}
-            ) as response:
-                if response.status == 200:
-                    messages = await response.json()
-                    message_logger.info(f"获取到{len(messages)}条历史消息")
-                    return messages
-                else:
-                    message_logger.error("获取历史消息失败")
-                    return []
+            
+            while len(all_messages) < limit:
+                params = {'limit': min(100, limit - len(all_messages))}
+                if before_id:
+                    params['before'] = before_id
+                
+                async with self.session.get(
+                    f'https://discord.com/api/v9/channels/{channel_id}/messages',
+                    params=params
+                ) as response:
+                    if response.status == 200:
+                        messages = await response.json()
+                        if not messages:  # 没有更多消息了
+                            break
+                            
+                        all_messages.extend(messages)
+                        
+                        # 获取最后一条消息的ID用于下一次请求
+                        before_id = messages[-1]['id']
+                        
+                        message_logger.info(f"已获取 {len(all_messages)}/{limit} 条历史消息")
+                        
+                        # 添加延迟避免触发限制
+                        await asyncio.sleep(1)
+                    else:
+                        error_data = await response.json()
+                        if response.status == 403 or response.status == 401 or error_data.get('code') == 50001:
+                            message_logger.info(f"频道无访问权限，已跳过")
+                        else:
+                            message_logger.error(f"获取历史消息失败: {error_data.get('message', '未知错误')}")
+                        break
+                        
+            return all_messages[:limit]  # 确保不超过请求的数量
+            
         except Exception as e:
-            message_logger.error("获取历史消息出错")
+            message_logger.error(f"获取历史消息出错: {str(e)}")
             return []
 
     async def get_guild_channels(self, guild_id: str) -> List[Dict[str, Any]]:

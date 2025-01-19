@@ -6,18 +6,23 @@ from datetime import datetime
 from pydantic import BaseModel
 import logging
 import json
+import asyncio
 
-from ..database import SessionLocal
+from ..database import SessionLocal, get_db
 from ..models.base import Message, KOL, Platform, Channel
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+discord_client = DiscordClient()
 
 class MessageCreate(BaseModel):
     content: str
     author_name: str
     channel_id: str
+
+class SyncHistoryRequest(BaseModel):
+    message_count: int
 
 def get_db():
     db = SessionLocal()
@@ -165,4 +170,100 @@ async def delete_message(message_id: int, db: Session = Depends(get_db)):
     
     db.delete(message)
     db.commit()
-    return {"status": "success"} 
+    return {"status": "success"}
+
+@router.post("/messages/sync-history")
+async def sync_history_messages(
+    request: SyncHistoryRequest,
+    db: Session = Depends(get_db)
+):
+    """同步所有频道的历史消息"""
+    if request.message_count <= 0:
+        raise HTTPException(status_code=400, detail="Message count must be positive")
+
+    total_messages = 0
+    channel_count = 0
+    errors = []
+    
+    # 获取所有频道的基本信息
+    channels = [(channel.platform_channel_id, channel.name) for channel in db.query(Channel).all()]
+    
+    # 创建信号量限制并发数
+    semaphore = asyncio.Semaphore(3)  # 降低并发数到3
+    
+    async def process_channel(channel_id: str, channel_name: str):
+        nonlocal total_messages, channel_count
+        # 为每个频道创建新的数据库会话
+        channel_db = SessionLocal()
+        try:
+            async with semaphore:
+                # 获取历史消息
+                messages = await discord_client.get_channel_messages(
+                    channel_id,
+                    limit=request.message_count
+                )
+                
+                if not messages:
+                    logger.info(f"频道 {channel_name} 没有历史消息")
+                    return
+                
+                # 存储消息
+                success_count = 0
+                for message_data in messages:
+                    try:
+                        # 使用频道专用的数据库会话
+                        await discord_client.store_message(message_data, channel_db)
+                        success_count += 1
+                    except Exception as e:
+                        logger.error(f"存储消息失败: {str(e)}")
+                        errors.append(f"频道 {channel_name} 消息 {message_data.get('id')} 存储失败: {str(e)}")
+                        # 回滚当前消息的事务
+                        channel_db.rollback()
+                        continue
+                
+                if success_count > 0:
+                    total_messages += success_count
+                    channel_count += 1
+                    logger.info(f"频道 {channel_name} 成功同步 {success_count} 条消息")
+                    
+        except Exception as e:
+            logger.error(f"处理频道失败: {str(e)}")
+            errors.append(f"处理频道 {channel_name} 失败: {str(e)}")
+            channel_db.rollback()
+        finally:
+            # 确保关闭数据库会话
+            channel_db.close()
+    
+    # 并发处理所有频道
+    tasks = [process_channel(channel_id, channel_name) for channel_id, channel_name in channels]
+    await asyncio.gather(*tasks)
+    
+    # 添加详细的结果日志
+    logger.info(f"同步完成: 处理了 {channel_count} 个频道，共 {total_messages} 条消息")
+    if errors:
+        logger.warning(f"发生了 {len(errors)} 个错误")
+    
+    return {
+        "total_messages": total_messages,
+        "channel_count": channel_count,
+        "errors": errors if errors else None
+    }
+
+@router.post("/messages/clear-all")
+async def clear_all_messages(db: Session = Depends(get_db)):
+    """清除数据库中的所有消息"""
+    try:
+        # 获取消息总数
+        message_count = db.query(Message).count()
+        
+        # 删除所有消息
+        db.query(Message).delete()
+        db.commit()
+        
+        return {
+            "deleted_count": message_count,
+            "status": "success"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) 
