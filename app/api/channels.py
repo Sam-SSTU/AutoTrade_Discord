@@ -39,6 +39,7 @@ class ChannelActiveUpdate(BaseModel):
 async def get_channels(
     guild_id: Optional[str] = None,
     kol_category: Optional[str] = None,
+    include_inactive: bool = False,
     db: Session = Depends(get_db)
 ):
     """获取频道列表，支持按服务器ID和KOL分类筛选"""
@@ -51,6 +52,9 @@ async def get_channels(
         if kol_category:
             query = query.filter(Channel.kol_category == kol_category)
             
+        if not include_inactive:
+            query = query.filter(Channel.is_active == True)
+            
         channels = query.order_by(desc(Channel.created_at)).all()
         
         result = []
@@ -62,6 +66,7 @@ async def get_channels(
                 "guild_id": channel.guild_id,
                 "guild_name": channel.guild_name,
                 "is_forwarding": channel.is_forwarding,
+                "is_active": channel.is_active,
                 "type": channel.type,
                 "parent_id": channel.parent_id,
                 "position": channel.position,

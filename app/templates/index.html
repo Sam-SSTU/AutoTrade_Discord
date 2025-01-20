@@ -394,7 +394,7 @@
                                      :key="channel.id" 
                                      class="channel-item"
                                      :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
-                                     v-if="channel.is_forwarding || devMode"
+                                     v-if="channel.is_active"
                                      @click="selectChannel(channel)">
                                     <div class="channel-content">
                                         <el-switch
