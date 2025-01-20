@@ -68,12 +68,61 @@
             -webkit-overflow-scrolling: touch; /* 增加iOS滚动支持 */
             scroll-behavior: smooth; /* 平滑滚动 */
         }
+        .clock-display {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.9em;
+            padding: 8px 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            display: inline-flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .clock-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .clock-label {
+            font-size: 0.8em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .clock-time {
+            font-size: 1em;
+            color: #212529;
+            letter-spacing: 0.5px;
+            min-width: 200px;
+        }
+        .clock-separator {
+            color: #dee2e6;
+            margin: 0 10px;
+        }
+        .timezone-selector {
+            max-width: 200px;
+        }
     </style>
 </head>
 <body>
     {% raw %}
     <div id="app" class="container mt-4">
-        <h1>Discord Channel Manager</h1>
+        <!-- 添加顶部时钟栏 -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Discord Channel Manager</h1>
+            <div class="clock-display">
+                <div class="clock-item">
+                    <span class="clock-label">UTC</span>
+                    <span class="clock-time">{{ utcTime }}</span>
+                </div>
+                <div class="clock-separator">|</div>
+                <div class="clock-item">
+                    <span class="clock-label">{{ selectedTimezone }}</span>
+                    <span class="clock-time">{{ localTime }}</span>
+                </div>
+            </div>
+        </div>
         
         <div class="container-fluid">
             <!-- 开发者模式切换按钮 -->
@@ -163,7 +212,7 @@
                                     <div class="message-header d-flex justify-content-between align-items-center">
                                         <div>
                                             <strong>{{ message.author_name }}</strong>
-                                            <span class="message-time">{{ new Date(message.created_at).toLocaleString() }}</span>
+                                            <span class="message-time">{{ formatMessageTime(message.created_at) }}</span>
                                         </div>
                                         <div>
                                             <button class="btn btn-sm btn-outline-danger" @click="deleteMessage(message.id)">
@@ -260,6 +309,22 @@
                             Developer Tools
                         </div>
                         <div class="card-body">
+                            <!-- 开发者工具 -->
+                            <div class="mb-3">
+                                <label class="form-label">Time Zone Settings</label>
+                                <select class="form-select mb-2" 
+                                        :value="selectedTimezone"
+                                        @change="updateTimezone($event.target.value)">
+                                    <option value="UTC">UTC</option>
+                                    <option value="local">Local Time</option>
+                                    <option value="Asia/Shanghai">Asia/Shanghai</option>
+                                    <option value="America/New_York">America/New_York</option>
+                                    <option value="Europe/London">Europe/London</option>
+                                    <option value="Asia/Tokyo">Asia/Tokyo</option>
+                                </select>
+                                <small class="text-muted">Select timezone for message timestamps and system clock</small>
+                            </div>
+
                             <!-- 同步频道按钮 -->
                             <div class="mb-3">
                                 <label class="form-label">Channel Management</label>
@@ -329,7 +394,11 @@
                 // 开发者工具相关
                 historyMessageCount: 100,
                 isSyncing: false,
-                devMode: false,  // 添加开发者模式状态
+                devMode: false,
+                selectedTimezone: localStorage.getItem('selectedTimezone') || 'local',  // 从localStorage读取时区设置
+                utcTime: '',
+                localTime: '',
+                clockInterval: null
             },
             computed: {
                 filteredChannels() {
@@ -727,6 +796,11 @@
                 },
                 toggleDevMode() {
                     this.devMode = !this.devMode;
+                    if (this.devMode) {
+                        this.startClocks();
+                    } else {
+                        this.stopClocks();
+                    }
                 },
                 async syncChannels() {
                     if (!confirm('确定要同步频道列表吗？这将更新所有频道的状态。')) {
@@ -835,13 +909,88 @@
                         });
                     }
                 },
+                formatMessageTime(timestamp) {
+                    try {
+                        const date = new Date(timestamp);
+                        if (this.selectedTimezone === 'UTC') {
+                            return date.toISOString();
+                        } else if (this.selectedTimezone === 'local') {
+                            return date.toLocaleString();
+                        } else {
+                            return date.toLocaleString('en-US', { timeZone: this.selectedTimezone });
+                        }
+                    } catch (e) {
+                        console.error('Error formatting time:', e);
+                        return timestamp;
+                    }
+                },
+                updateClocks() {
+                    const now = new Date();
+                    
+                    // 格式化UTC时间
+                    const utcOptions = {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: 'UTC'
+                    };
+                    this.utcTime = now.toLocaleString('en-US', utcOptions).replace(',', '');
+                    
+                    // 格式化选定时区的时间
+                    const localOptions = {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: this.selectedTimezone === 'local' ? undefined : this.selectedTimezone
+                    };
+                    this.localTime = now.toLocaleString('en-US', localOptions).replace(',', '');
+                },
+                startClocks() {
+                    this.updateClocks();
+                    if (this.clockInterval) {
+                        clearInterval(this.clockInterval);
+                    }
+                    this.clockInterval = setInterval(() => {
+                        requestAnimationFrame(() => {
+                            this.updateClocks();
+                        });
+                    }, 1000);
+                },
+                stopClocks() {
+                    if (this.clockInterval) {
+                        clearInterval(this.clockInterval);
+                        this.clockInterval = null;
+                    }
+                },
+                // 更新时区设置
+                updateTimezone(timezone) {
+                    this.selectedTimezone = timezone;
+                    localStorage.setItem('selectedTimezone', timezone);
+                    this.updateClocks();
+                },
+            },
+            watch: {
+                selectedTimezone() {
+                    // 当时区改变时，更新时钟显示
+                    this.updateClocks();
+                }
             },
             async mounted() {
+                this.startClocks(); // 启动时钟
                 await this.loadChannels();
                 this.initWebSocket();
                 this.messageCheckInterval = setInterval(this.checkNewMessages, 10000);
             },
             beforeDestroy() {
+                this.stopClocks();
                 if (this.messageCheckInterval) {
                     clearInterval(this.messageCheckInterval);
                 }
