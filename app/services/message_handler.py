@@ -6,7 +6,7 @@ import asyncio
 import json
 import traceback
 
-from ..models import Message, KOL, Platform, Channel
+from ..models.base import Message, KOL, Platform, Channel, UnreadMessage
 from ..database import SessionLocal
 from .discord_client import DiscordClient
 from .message_utils import extract_message_content
@@ -72,6 +72,32 @@ class MessageHandler:
             # 使用 discord_client 的方法存储消息
             await self.discord_client.store_message(message_data, self._db)
             self._db.commit()
+            
+            # Increment unread count
+            channel = self._db.query(Channel).filter(
+                Channel.platform_channel_id == str(message_data.get('channel_id'))
+            ).first()
+            
+            if channel:
+                unread = self._db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+                if unread:
+                    unread.unread_count += 1
+                else:
+                    unread = UnreadMessage(
+                        channel_id=channel.id,
+                        unread_count=1
+                    )
+                    self._db.add(unread)
+                self._db.commit()
+            
+            return {
+                'type': 'new_message',
+                'channel_id': channel.platform_channel_id,
+                'channel_name': channel.name,
+                'author_name': username,
+                'content': content,
+                'created_at': datetime.now().isoformat()
+            }
             
         except Exception as e:
             message_logger.error(f"处理消息出错: {str(e)}")

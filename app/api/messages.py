@@ -10,7 +10,7 @@ import asyncio
 import traceback
 
 from ..database import SessionLocal, get_db
-from ..models.base import Message, KOL, Platform, Channel, Attachment
+from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
@@ -160,6 +160,9 @@ async def create_message(
     db.commit()
     db.refresh(message)
     
+    # Increment unread count
+    await increment_unread_count(channel.id, db)
+    
     return {
         "id": message.id,
         "content": message.content,
@@ -305,4 +308,58 @@ async def debug_log(data: dict = Body(...)):
     else:
         logger.info(f"Debug Log ({log_type}): {log_data}")
     
-    return {"status": "ok"} 
+    return {"status": "ok"}
+
+@router.get("/messages/unread-counts")
+async def get_unread_counts(db: Session = Depends(get_db)):
+    """Get unread message counts for all channels"""
+    unread_messages = db.query(UnreadMessage).all()
+    return {
+        str(unread.channel.platform_channel_id): unread.unread_count 
+        for unread in unread_messages
+    }
+
+@router.post("/messages/mark-channel-read/{channel_id}")
+async def mark_channel_read(channel_id: str, db: Session = Depends(get_db)):
+    """Mark all messages in a channel as read"""
+    channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+        
+    # Get the latest message in the channel
+    latest_message = db.query(Message).filter(Message.channel_id == channel.id)\
+        .order_by(desc(Message.created_at)).first()
+        
+    # Update or create unread message record
+    unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+    if unread:
+        unread.last_read_message_id = latest_message.id if latest_message else None
+        unread.unread_count = 0
+    else:
+        unread = UnreadMessage(
+            channel_id=channel.id,
+            last_read_message_id=latest_message.id if latest_message else None,
+            unread_count=0
+        )
+        db.add(unread)
+    
+    db.commit()
+    return {"status": "success"}
+
+@router.post("/messages/mark-all-read")
+async def mark_all_read(db: Session = Depends(get_db)):
+    """Mark all messages in all channels as read"""
+    db.query(UnreadMessage).update({"unread_count": 0})
+    db.commit()
+    return {"status": "success"}
+
+# Update the existing create_message function to increment unread count
+async def increment_unread_count(channel_id: int, db: Session):
+    """Helper function to increment unread count for a channel"""
+    unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel_id).first()
+    if unread:
+        unread.unread_count += 1
+    else:
+        unread = UnreadMessage(channel_id=channel_id, unread_count=1)
+        db.add(unread)
+    db.commit() 

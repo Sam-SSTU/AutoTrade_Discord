@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config.author_categories import is_monitored_channel, get_author_category
 from ..database import SessionLocal
-from ..models.base import KOL, Message, Platform, Channel, Attachment
+from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.message_utils import extract_message_content
 from .file_utils import FileHandler
 
@@ -30,6 +30,7 @@ class DiscordClient:
         self._last_sequence = None
         self._running = False
         self.file_handler = FileHandler()
+        self.connected_websockets = set()
         
         message_logger.info("Discord客户端已初始化")
         
@@ -306,96 +307,78 @@ class DiscordClient:
         except Exception:
             return False
 
-    async def store_message(self, message_data: Dict[str, Any], db: Session):
-        """存储消息到数据库"""
+    async def store_message(self, message_data: dict, db: Session) -> None:
+        """Store a Discord message in the database"""
         try:
-            # 获取消息基本信息
-            message_id = message_data.get('id')
-            discord_channel_id = message_data.get('channel_id')
-            content = message_data.get('content', '')
-            author = message_data.get('author', {})
-            username = f"{author.get('username')}#{author.get('discriminator')}"
-            
-            # 检查消息是否已存在
-            existing_message = db.query(Message).filter(
-                Message.platform_message_id == str(message_id)
+            # Get channel
+            channel = db.query(Channel).filter(
+                Channel.platform_channel_id == str(message_data.get('channel_id'))
             ).first()
             
-            if existing_message:
-                message_logger.info(f"消息已存在，跳过: {message_id}")
+            if not channel:
+                message_logger.error(f"Channel not found: {message_data.get('channel_id')}")
                 return
             
-            # 获取或创建KOL记录
+            # Get or create KOL
+            author = message_data.get('author', {})
             kol = db.query(KOL).filter(
-                KOL.platform == Platform.DISCORD.value,
-                KOL.platform_user_id == str(author["id"])
+                KOL.platform_user_id == str(author.get('id'))
             ).first()
             
             if not kol:
                 kol = KOL(
-                    name=username,
+                    name=author.get('username'),
                     platform=Platform.DISCORD.value,
-                    platform_user_id=str(author["id"]),
+                    platform_user_id=str(author.get('id')),
                     is_active=True
                 )
                 db.add(kol)
-                db.flush()
+                db.commit()
             
-            # 获取Channel记录
-            channel = db.query(Channel).filter(
-                Channel.platform_channel_id == str(discord_channel_id)
-            ).first()
-            
-            if not channel:
-                message_logger.error(f"找不到频道记录: {discord_channel_id}")
-                return
-            
-            # 创建消息记录
+            # Create message
             message = Message(
-                platform_message_id=str(message_id),
+                platform_message_id=str(message_data.get('id')),
                 channel_id=channel.id,
                 kol_id=kol.id,
-                content=content,
+                content=message_data.get('content'),
                 embeds=json.dumps(message_data.get('embeds', [])),
-                referenced_message_id=str(message_data.get('referenced_message', {}).get('id')) if message_data.get('referenced_message', {}).get('id') else None,
-                referenced_content=message_data.get('referenced_message', {}).get('content'),
-                created_at=datetime.fromisoformat(message_data.get('timestamp').rstrip('Z')).replace(tzinfo=timezone.utc)
+                referenced_message_id=str(message_data.get('referenced_message', {}).get('id')) if message_data.get('referenced_message') else None,
+                referenced_content=message_data.get('referenced_message', {}).get('content') if message_data.get('referenced_message') else None,
+                created_at=datetime.fromisoformat(message_data.get('timestamp').replace('Z', '+00:00'))
             )
             
             db.add(message)
-            db.flush()  # 获取message.id
-            
-            # 处理附件
-            attachments = message_data.get('attachments', [])
-            for attachment in attachments:
-                try:
-                    # 下载附件
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(attachment['url']) as response:
-                            if response.status == 200:
-                                file_data = await response.read()
-                                content_type = response.headers.get('Content-Type', 'application/octet-stream')
-                                
-                                # 创建附件记录
-                                db_attachment = Attachment(
-                                    message_id=message.id,
-                                    filename=attachment.get('filename', 'unknown'),
-                                    content_type=content_type,
-                                    file_data=file_data
-                                )
-                                db.add(db_attachment)
-                                message_logger.info(f"附件已保存到数据库: {attachment.get('filename')}")
-                            else:
-                                message_logger.error(f"下载附件失败: {attachment['url']}")
-                except Exception as e:
-                    message_logger.error(f"处理附件时出错: {str(e)}")
-                    continue
-            
             db.commit()
-            message_logger.info(f"{username}发了消息: {content or '[空消息]'}")
+            
+            # Handle attachments
+            for attachment_data in message_data.get('attachments', []):
+                await self._store_attachment(attachment_data, message.id, db)
+            
+            # Increment unread count
+            unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+            if unread:
+                unread.unread_count += 1
+            else:
+                unread = UnreadMessage(
+                    channel_id=channel.id,
+                    unread_count=1
+                )
+                db.add(unread)
+            db.commit()
+            
+            # Send WebSocket notification
+            await self.broadcast_message({
+                'type': 'new_message',
+                'channel_id': channel.platform_channel_id,
+                'channel_name': channel.name,
+                'author_name': kol.name,
+                'content': message.content,
+                'created_at': message.created_at.isoformat()
+            })
             
         except Exception as e:
-            message_logger.error(f"存储消息时出错: {str(e)}")
+            message_logger.error(f"Error storing message: {str(e)}")
+            message_logger.error(traceback.format_exc())
             db.rollback()
             raise
 
@@ -490,4 +473,28 @@ class DiscordClient:
                     return {}
         except Exception as e:
             message_logger.error("获取用户信息出错")
-            return {} 
+            return {}
+
+    def register_websocket(self, websocket):
+        """Register a WebSocket connection"""
+        self.connected_websockets.add(websocket)
+        
+    def unregister_websocket(self, websocket):
+        """Unregister a WebSocket connection"""
+        self.connected_websockets.discard(websocket)
+        
+    async def broadcast_message(self, message: Dict[str, Any]):
+        """Broadcast a message to all connected WebSocket clients"""
+        if not self.connected_websockets:
+            return
+            
+        # Convert message to JSON string
+        message_str = json.dumps(message)
+        
+        # Send to all connected clients
+        for websocket in self.connected_websockets.copy():
+            try:
+                await websocket.send_text(message_str)
+            except Exception as e:
+                message_logger.error(f"Error broadcasting message: {str(e)}")
+                self.connected_websockets.discard(websocket) 

@@ -78,3 +78,16 @@ class Message(Base):
     channel = relationship("Channel", back_populates="messages")
     kol = relationship("KOL", back_populates="messages")
     attachments = relationship("Attachment", back_populates="message", cascade="all, delete-orphan") 
+
+class UnreadMessage(Base):
+    __tablename__ = "unread_messages"
+    
+    id = Column(Integer, primary_key=True)
+    channel_id = Column(Integer, ForeignKey("channels.id"), nullable=False)
+    last_read_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+    unread_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    channel = relationship("Channel", backref="unread_messages")
+    last_read_message = relationship("Message") 
