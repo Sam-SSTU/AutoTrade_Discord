@@ -4,6 +4,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 import enum
 from ..database import Base
+from datetime import datetime
 
 Base = declarative_base()
 
@@ -27,6 +28,9 @@ class Channel(Base):
     guild_name = Column(String, nullable=False)
     category_id = Column(String)
     category_name = Column(String)
+    position = Column(Integer, default=0)  # 频道在分类中的位置
+    parent_id = Column(String)  # 父频道ID（对应Discord的category ID）
+    type = Column(Integer)  # Discord的频道类型（0=text, 2=voice, 4=category等）
     is_active = Column(Boolean, default=False)
     kol_category = Column(Enum(KOLCategory), nullable=True)
     kol_name = Column(String, nullable=True)
@@ -53,13 +57,12 @@ class Attachment(Base):
     __tablename__ = 'attachments'
     
     id = Column(Integer, primary_key=True)
-    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
-    filename = Column(String, nullable=False)
-    content_type = Column(String, nullable=False)
-    file_data = Column(LargeBinary, nullable=False)  # 存储文件的二进制数据
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=True)
+    filename = Column(String)
+    content_type = Column(String)
+    file_data = Column(LargeBinary)
+    created_at = Column(DateTime, default=datetime.now)
     
-    # 关系
     message = relationship("Message", back_populates="attachments")
 
 class Message(Base):

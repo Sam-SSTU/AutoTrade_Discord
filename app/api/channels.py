@@ -5,12 +5,21 @@ from sqlalchemy import desc
 import logging
 
 from ..database import SessionLocal, get_db
-from ..models.base import Channel, KOL, KOLCategory, Message
+from ..models.base import Channel, KOL, KOLCategory, Message, UnreadMessage, Attachment
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
-discord_client = DiscordClient()
 message_logger = logging.getLogger("Message Logs")
+logger = logging.getLogger(__name__)
+
+# Create a single instance of DiscordClient
+_discord_client = None
+
+def get_discord_client():
+    global _discord_client
+    if _discord_client is None:
+        _discord_client = DiscordClient()
+    return _discord_client
 
 def get_db():
     db = SessionLocal()
@@ -63,20 +72,22 @@ async def get_channels(
                 "guild_id": channel.guild_id,
                 "guild_name": channel.guild_name,
                 "is_active": channel.is_active,
+                "type": channel.type,
+                "parent_id": channel.parent_id,
+                "position": channel.position,
+                "category_name": channel.category_name,
                 "created_at": channel.created_at.isoformat() if channel.created_at else None,
                 "updated_at": channel.updated_at.isoformat() if channel.updated_at else None
             }
-            # 只添加存在的可选字段
-            if hasattr(channel, 'category_id') and channel.category_id:
-                channel_data["category_id"] = channel.category_id
-            if hasattr(channel, 'category_name') and channel.category_name:
-                channel_data["category_name"] = channel.category_name
-            if hasattr(channel, 'kol_category') and channel.kol_category:
-                channel_data["kol_category"] = channel.kol_category.value
-            if hasattr(channel, 'kol_name') and channel.kol_name:
-                channel_data["kol_name"] = channel.kol_name
-                
             result.append(channel_data)
+            
+            # 调试日志
+            if channel.type == 4:  # 如果是分类
+                print(f"Found category: {channel.name} (ID: {channel.platform_channel_id})")
+            elif channel.parent_id:  # 如果属于某个分类
+                print(f"Channel {channel.name} belongs to category: {channel.parent_id}")
+            else:
+                print(f"Uncategorized channel: {channel.name}")
         
         # 打印返回结果
         print(f"Returning {len(result)} channels")
@@ -89,7 +100,7 @@ async def get_channels(
 @router.post("/channels/sync")
 async def sync_channels(db: Session = Depends(get_db)):
     """同步Discord中的频道列表到数据库"""
-    result = await discord_client.sync_channels_to_db(db)
+    result = await get_discord_client().sync_channels_to_db(db)
     return result
 
 @router.post("/channels/{channel_id}/activate")
@@ -131,35 +142,35 @@ async def update_channel_category(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid category")
 
-@router.post("/channels/reset", response_model=Dict[str, Any])
+@router.post("/reset")
 async def reset_channels(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """清除所有频道并重新同步"""
+    """重置所有频道"""
     try:
-        # 删除所有频道相关的消息
+        # First delete all unread_messages records
+        db.query(UnreadMessage).delete()
+        db.commit()
+        
+        # Then delete all attachments
+        db.query(Attachment).delete()
+        db.commit()
+        
+        # Now delete all messages
         db.query(Message).delete()
-        # 删除所有频道
+        db.commit()
+        
+        # Finally delete all channels
         db.query(Channel).delete()
         db.commit()
         
-        message_logger.info("已清除所有频道和相关消息")
+        return {"message": "频道重置成功"}
         
-        # 同步频道
-        result = await discord_client.sync_channels_to_db(db)
-        
-        message_logger.info(f"频道重置完成: {result['accessible_count']} 个可访问, {result['inaccessible_count']} 个无权限")
-        
-        return {
-            "message": "频道重置成功",
-            "accessible_count": result["accessible_count"],
-            "inaccessible_count": result["inaccessible_count"]
-        }
     except Exception as e:
         db.rollback()
-        message_logger.error(f"重置频道失败: {str(e)}")
+        logger.error(f"重置频道失败: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"重置频道失败: {str(e)}"
+            detail=str(e)
         ) 

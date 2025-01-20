@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response
+from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from datetime import datetime
@@ -8,10 +8,12 @@ import logging
 import json
 import asyncio
 import traceback
+import os
 
 from ..database import SessionLocal, get_db
 from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.discord_client import DiscordClient
+from ..services.file_utils import FileHandler
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -128,61 +130,104 @@ async def create_message(
     db: Session = Depends(get_db)
 ):
     """创建新消息"""
-    # 获取Channel
-    channel = db.query(Channel).filter(
-        Channel.platform_channel_id == message_create.channel_id
-    ).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
-    
-    # 获取或创建KOL
-    kol = db.query(KOL).filter(KOL.name == message_create.author_name).first()
-    if not kol:
-        kol = KOL(
-            name=message_create.author_name,
-            platform=Platform.DISCORD.value,
-            platform_user_id=f"manual_{datetime.now().timestamp()}",
-            is_active=True
+    try:
+        # 获取Channel
+        channel = db.query(Channel).filter(
+            Channel.platform_channel_id == message_create.channel_id
+        ).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        
+        # 获取或创建KOL
+        kol = db.query(KOL).filter(KOL.name == message_create.author_name).first()
+        if not kol:
+            kol = KOL(
+                name=message_create.author_name,
+                platform=Platform.DISCORD.value,
+                platform_user_id=f"manual_{datetime.now().timestamp()}",
+                is_active=True
+            )
+            db.add(kol)
+            db.commit()
+        
+        # 创建消息
+        message = Message(
+            platform_message_id=f"manual_{datetime.now().timestamp()}",
+            content=message_create.content,
+            channel_id=channel.id,
+            kol_id=kol.id,
+            created_at=datetime.now()
         )
-        db.add(kol)
+        
+        db.add(message)
         db.commit()
-    
-    # 创建消息
-    message = Message(
-        platform_message_id=f"manual_{datetime.now().timestamp()}",
-        content=message_create.content,
-        channel_id=channel.id,  # 使用数据库的channel ID
-        kol_id=kol.id,
-        created_at=datetime.now()
-    )
-    
-    db.add(message)
-    db.commit()
-    db.refresh(message)
-    
-    # Increment unread count
-    await increment_unread_count(channel.id, db)
-    
-    return {
-        "id": message.id,
-        "content": message.content,
-        "author_name": kol.name,
-        "channel_id": channel.platform_channel_id,  # 返回Discord的channel ID
-        "created_at": message.created_at.isoformat(),
-        "referenced_message_id": None,
-        "referenced_content": None
-    }
+        db.refresh(message)
+        
+        # Increment unread count
+        await increment_unread_count(channel.id, db)
+        
+        # 广播新消息通知
+        discord_client.broadcast_message({
+            'type': 'new_message',
+            'channel_id': channel.platform_channel_id,
+            'channel_name': channel.name,
+            'author_name': kol.name,
+            'content': message.content,
+            'created_at': message.created_at.isoformat()
+        })
+        
+        return {
+            "id": message.id,
+            "content": message.content,
+            "author_name": kol.name,
+            "channel_id": channel.platform_channel_id,
+            "created_at": message.created_at.isoformat(),
+            "referenced_message_id": None,
+            "referenced_content": None
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating message: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/messages/{message_id}")
 async def delete_message(message_id: int, db: Session = Depends(get_db)):
     """删除指定消息"""
-    message = db.query(Message).filter(Message.id == message_id).first()
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
-    
-    db.delete(message)
-    db.commit()
-    return {"status": "success"}
+    try:
+        message = db.query(Message).filter(Message.id == message_id).first()
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # 先更新 unread_messages 表中引用这条消息的记录
+        unread_messages = db.query(UnreadMessage).filter(
+            UnreadMessage.last_read_message_id == message_id
+        ).all()
+        
+        for unread in unread_messages:
+            # 获取该频道的最新消息（除了要删除的消息）
+            latest_message = db.query(Message).filter(
+                Message.channel_id == unread.channel_id,
+                Message.id != message_id
+            ).order_by(desc(Message.created_at)).first()
+            
+            unread.last_read_message_id = latest_message.id if latest_message else None
+        
+        db.commit()
+        
+        # 删除消息的附件
+        db.query(Attachment).filter(Attachment.message_id == message_id).delete()
+        db.commit()
+        
+        # 最后删除消息
+        db.delete(message)
+        db.commit()
+        
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"删除消息失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/messages/sync-history")
 async def sync_history_messages(
@@ -362,4 +407,26 @@ async def increment_unread_count(channel_id: int, db: Session):
     else:
         unread = UnreadMessage(channel_id=channel_id, unread_count=1)
         db.add(unread)
-    db.commit() 
+    db.commit()
+
+@router.get("/ping")
+async def ping():
+    """Check backend connectivity"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+@router.get("/unread-counts")
+async def get_unread_counts(db: Session = Depends(get_db)):
+    """Get unread message counts for all channels"""
+    try:
+        unread_counts = {}
+        unread_messages = db.query(UnreadMessage).all()
+        
+        for unread in unread_messages:
+            channel = db.query(Channel).filter(Channel.id == unread.channel_id).first()
+            if channel:
+                unread_counts[channel.platform_channel_id] = unread.unread_count
+        
+        return unread_counts
+    except Exception as e:
+        logger.error(f"Error getting unread counts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) 

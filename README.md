@@ -89,7 +89,11 @@ pip install -r requirements.txt
 ```bash
 # 启动应用
 uvicorn app.main:app --reload
+
+
 ```
+stop
+kill -9 $(lsof -ti:8000)
 
 访问 http://localhost:8000 即可打开应用。
 

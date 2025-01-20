@@ -4,74 +4,106 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Discord Channel Manager</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        .channel-list, .message-list {
-            max-height: 600px;
+        body {
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+        }
+        #app {
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 100% !important;
+            padding: 0 !important;
+        }
+        .main-content {
+            height: calc(100vh - 100px);
+            display: flex;
+            gap: 20px;
+        }
+        .channels-container {
+            width: 300px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .messages-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .card {
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            padding: 16px;
+        }
+        .card-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+        .channel-list {
+            height: 100%;
             overflow-y: auto;
         }
+        .message-list {
+            padding: 16px;
+            height: 100%;
+            overflow-y: auto;
+        }
+        .category-header {
+            padding: 8px 16px;
+            background-color: #f8f9fa;
+            color: #495057;
+            font-weight: 500;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .category-header:hover {
+            background-color: #e9ecef;
+        }
         .channel-item {
-            padding: 8px;
-            border-bottom: 1px solid #eee;
+            padding: 8px 8px 8px 20px;
+            color: #495057;
             display: flex;
             justify-content: space-between;
             align-items: center;
             cursor: pointer;
+            border-bottom: 1px solid #dee2e6;
         }
         .channel-item:hover {
             background-color: #f8f9fa;
         }
         .channel-item.active {
             background-color: #e9ecef;
+            color: #000;
         }
         .message-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 16px;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
         }
-        .message-header {
-            font-size: 0.9em;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        .message-content {
-            white-space: pre-wrap;
-        }
-        .message-time {
-            font-size: 0.8em;
-            color: #999;
-        }
-        .unread-badge {
-            background-color: #dc3545;
-            color: white;
-            border-radius: 50%;
-            padding: 2px 6px;
-            font-size: 0.8em;
-            margin-left: 8px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 20px;
-            height: 20px;
-        }
-        .log-container {
-            max-height: 300px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-        .log-entry {
-            padding: 4px;
-            border-bottom: 1px solid #f0f0f0;
-            white-space: pre-wrap;
-        }
-        .badge {
-            font-size: 0.8em;
-        }
-        .message-list {
-            max-height: 600px;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
-            scroll-behavior: smooth;
+        .message-item:hover {
+            background-color: #f8f9fa;
         }
         .clock-display {
             font-family: 'Roboto Mono', monospace;
@@ -83,7 +115,6 @@
             display: inline-flex;
             align-items: center;
             gap: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
         .clock-item {
             display: flex;
@@ -105,272 +136,300 @@
             color: #dee2e6;
             margin: 0 10px;
         }
-        .timezone-selector {
-            max-width: 200px;
-        }
-        .clear-all-btn {
-            margin-left: 10px;
+        .unread-badge {
+            background-color: #dc3545;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
             font-size: 0.8em;
+            min-width: 20px;
+            text-align: center;
+        }
+        .channel-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .channel-icon {
+            font-size: 1.2em;
+            color: #6c757d;
+        }
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .log-entry {
+            padding: 4px;
+            border-bottom: 1px solid #f0f0f0;
+            white-space: pre-wrap;
+        }
+        .connection-status {
+            margin-left: 15px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background-color: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            margin-bottom: 20px;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .header-left h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #333;
+        }
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .connection-status.connected {
+            background-color: #67C23A;
+            color: white;
+        }
+        .connection-status.disconnected {
+            background-color: #F56C6C;
+            color: white;
+        }
+        .connection-status i {
+            font-size: 16px;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+        }
+        .time-display {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 8px 15px;
+            background-color: #f5f7fa;
+            border-radius: 4px;
+            border: 1px solid #e4e7ed;
+        }
+        .time-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .time-label {
+            font-size: 12px;
+            color: #909399;
+            font-weight: 500;
+        }
+        .time-value {
+            font-size: 14px;
+            color: #303133;
+            font-family: 'Roboto Mono', monospace;
+        }
+        .time-separator {
+            color: #dcdfe6;
         }
     </style>
 </head>
 <body>
     {% raw %}
-    <div id="app" class="container mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1>Discord Channel Manager</h1>
-            <div class="clock-display">
-                <div class="clock-item">
-                    <span class="clock-label">UTC</span>
-                    <span class="clock-time">{{ utcTime }}</span>
+    <div id="app">
+        <div class="header">
+            <div class="header-left">
+                <h1>Discord Channel Manager</h1>
+                <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
+                    <i class="el-icon-connection"></i>
+                    <span v-text="isConnected ? '已连接' : '未连接'"></span>
                 </div>
-                <div class="clock-separator">|</div>
-                <div class="clock-item">
-                    <span class="clock-label">{{ selectedTimezone }}</span>
-                    <span class="clock-time">{{ localTime }}</span>
+            </div>
+            <div class="header-right">
+                <div class="time-display">
+                    <div class="time-item">
+                        <span>UTC</span>
+                        <span v-text="utcTime"></span>
+                    </div>
+                    <div class="time-separator">|</div>
+                    <div class="time-item">
+                        <span v-text="selectedTimezone"></span>
+                        <span v-text="localTime"></span>
+                    </div>
                 </div>
             </div>
         </div>
-        
-        <div class="container-fluid">
-            <div class="position-fixed top-0 end-0 p-3">
-                <button class="btn btn-outline-primary" @click="toggleDevMode">
-                    {{ devMode ? '退出开发者模式' : '开发者模式' }}
-                </button>
-            </div>
 
-            <div class="row mb-3">
-                <div class="col-md-4">
-                    <div class="card">
-                        <div class="card-header">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h5 class="mb-0">
-                                    Channels
-                                    <button v-if="hasUnreadMessages" 
-                                            class="btn btn-sm btn-outline-secondary clear-all-btn"
-                                            @click="markAllChannelsRead">
-                                        Clear All
-                                    </button>
-                                </h5>
-                                <input type="text" class="form-control w-50" v-model="channelSearch" placeholder="Search channels">
-                            </div>
-                        </div>
-                        <div class="card-body channel-list">
-                            <div v-for="channel in filteredChannels" 
-                                 :key="channel.id" 
-                                 class="channel-item"
-                                 :class="{ 
-                                     active: selectedChannel && selectedChannel.id === channel.id,
-                                     'text-muted': !channel.is_active
-                                 }"
-                                 @click="selectChannel(channel)">
-                                <span>
-                                    {{ channel.name }}
-                                    <span v-if="devMode && !channel.is_active" class="badge bg-warning text-dark ms-1">无权限</span>
-                                </span>
-                                <span v-if="unreadCounts[channel.platform_channel_id]" class="unread-badge">
-                                    {{ unreadCounts[channel.platform_channel_id] }}
-                                </span>
-                            </div>
+        <button class="btn btn-outline-primary mb-3" @click="toggleDevMode">
+            <span v-text="devMode ? '退出开发者模式' : '开发者模式'"></span>
+        </button>
+
+        <div class="main-content">
+            <div class="channels-container">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Channels</h5>
+                            <input type="text" class="form-control w-50" v-model="channelSearch" placeholder="Search...">
                         </div>
                     </div>
-                </div>
-
-                <div class="col-md-8">
-                    <div class="card">
-                        <div class="card-header">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h5 class="mb-0">Messages {{ selectedChannel ? '- ' + selectedChannel.name : '' }}</h5>
-                                <div>
-                                    <button v-if="selectedChannel" 
-                                            class="btn btn-sm btn-outline-primary me-2" 
-                                            @click="refreshMessages"
-                                            :disabled="loading">
-                                        <span v-if="loading">刷新中...</span>
-                                        <span v-else>刷新消息</span>
-                                    </button>
-                                    <button v-if="selectedChannel" 
-                                            class="btn btn-sm btn-success" 
-                                            @click="showAddMessageForm = true">
-                                        Add Message
-                                    </button>
+                    <div class="card-body">
+                        <div v-for="category in groupedChannels" :key="category.id" class="category">
+                            <div class="category-header" @click="toggleCategory(category.id)">
+                                <span v-text="category.name || '未分类'"></span>
+                            </div>
+                            <div v-show="expandedCategories[category.id]">
+                                <div v-for="channel in category.channels" 
+                                     :key="channel.id" 
+                                     class="channel-item"
+                                     :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
+                                     @click="selectChannel(channel)">
+                                    <div class="channel-name">
+                                        <span>#</span>
+                                        <span v-text="channel.name"></span>
+                                    </div>
+                                    <span v-if="unreadCounts[channel.platform_channel_id]" 
+                                          class="unread-badge"
+                                          v-text="unreadCounts[channel.platform_channel_id]">
+                                    </span>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card-body message-list" 
-                             @scroll.passive="handleScroll" 
-                             ref="messageList"
-                             style="min-height: 400px;">
-                            <div v-if="showAddMessageForm" class="mb-3 p-3 border rounded">
-                                <div class="mb-2">
-                                    <label class="form-label">Message Content:</label>
-                                    <textarea class="form-control" v-model="newMessage.content" rows="3"></textarea>
-                                </div>
-                                <div class="mb-2">
-                                    <label class="form-label">Author Name:</label>
-                                    <input type="text" class="form-control" v-model="newMessage.author_name">
-                                </div>
-                                <div>
-                                    <button class="btn btn-sm btn-primary me-2" @click="addMessage">Save</button>
-                                    <button class="btn btn-sm btn-secondary" @click="cancelAddMessage">Cancel</button>
-                                </div>
-                            </div>
-                            <div v-if="!selectedChannel" class="text-center text-muted py-5">
-                                Select a channel to view messages
-                            </div>
-                            <div v-else-if="messages.length === 0" class="text-center text-muted py-5">
-                                No messages found
-                            </div>
-                            <template v-else>
-                                <div v-for="message in messages" :key="message.id" class="message-item">
-                                    <div class="message-header d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <strong>{{ message.author_name }}</strong>
-                                            <span class="message-time">{{ formatMessageTime(message.created_at) }}</span>
-                                        </div>
-                                        <div>
-                                            <button class="btn btn-sm btn-outline-danger" @click="deleteMessage(message.id)">
-                                                Delete
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="message-content">{{ message.content || '' }}</div>
-                                    <!-- 添加附件显示 -->
-                                    <div v-if="message.attachments && message.attachments !== '[]'" class="message-attachments mt-2">
-                                        <div v-for="attachment in parseJSON(message.attachments)" :key="attachment.id" class="attachment-item">
-                                            <!-- 图片附件 -->
-                                            <img v-if="attachment.content_type && attachment.content_type.startsWith('image/')"
-                                                 :src="attachment.url"
-                                                 :alt="attachment.filename"
-                                                 class="img-fluid rounded"
-                                                 style="max-height: 300px;">
-                                            <!-- 其他类型的附件 -->
-                                            <a v-else
-                                               :href="attachment.url"
-                                               target="_blank"
-                                               class="btn btn-sm btn-outline-primary">
-                                                <i class="bi bi-download"></i> {{ attachment.filename }}
-                                            </a>
-                                        </div>
-                                    </div>
-                                    <!-- 添加嵌入内容显示 -->
-                                    <div v-if="message.embeds && message.embeds !== '[]'" class="message-embeds mt-2">
-                                        <div v-for="embed in parseJSON(message.embeds)" :key="embed.id" class="embed-item border-start ps-3 mt-2">
-                                            <div v-if="embed.title" class="embed-title fw-bold">{{ embed.title }}</div>
-                                            <div v-if="embed.description" class="embed-description">{{ embed.description }}</div>
-                                            <img v-if="embed.image" :src="embed.image.url" class="img-fluid rounded mt-2" style="max-height: 300px;">
-                                            <img v-if="embed.thumbnail" :src="embed.thumbnail.url" class="img-fluid rounded mt-2" style="max-height: 150px;">
-                                        </div>
-                                    </div>
-                                    <div v-if="message.referenced_content" class="message-reference mt-2 ps-3 border-start">
-                                        <small class="text-muted">Replying to: {{ message.referenced_content }}</small>
-                                    </div>
-                                </div>
-                                <div v-if="loading" class="text-center py-3">
-                                    Loading more messages...
-                                </div>
-                                <div v-if="!hasMore" class="text-center text-muted py-3">
-                                    No more messages
-                                </div>
-                            </template>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 开发者模式内容 -->
-            <div v-if="devMode" class="row">
-                <!-- 系统日志 -->
-                <div class="col-md-3">
-                    <div class="card">
-                        <div class="card-header">
-                            System Logs
-                            <button class="btn btn-sm btn-secondary float-end" @click="clearSystemLogs">Clear</button>
-                        </div>
-                        <div class="card-body">
-                            <div class="log-container" ref="systemLogContainer">
-                                <div v-for="(log, index) in systemLogs" :key="index" class="log-entry">
-                                    {{ log }}
-                                </div>
+            <div class="messages-container">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0" v-text="selectedChannel ? selectedChannel.name : 'Select a channel'"></h5>
+                            <div v-if="selectedChannel">
+                                <button class="btn btn-outline-primary btn-sm" @click="refreshMessages">
+                                    Refresh
+                                </button>
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- 消息日志 -->
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header">
-                            Message Logs
-                            <button class="btn btn-sm btn-secondary float-end" @click="clearMessageLogs">Clear</button>
-                        </div>
-                        <div class="card-body">
-                            <div class="log-container" ref="messageLogContainer">
-                                <div v-for="(log, index) in messageLogs" :key="index" class="log-entry">
-                                    <span class="badge bg-primary me-2">{{ log.channel }}</span>
-                                    <span class="badge bg-secondary me-2">{{ log.author }}</span>
-                                    {{ log.content }}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 开发者工具 -->
-                <div class="col-md-3">
-                    <div class="card">
-                        <div class="card-header">
-                            Developer Tools
-                        </div>
-                        <div class="card-body">
-                            <!-- 开发者工具 -->
-                            <div class="mb-3">
-                                <label class="form-label">Time Zone Settings</label>
-                                <select class="form-select mb-2" 
-                                        :value="selectedTimezone"
-                                        @change="updateTimezone($event.target.value)">
-                                    <option value="UTC">UTC</option>
-                                    <option value="local">Local Time</option>
-                                    <option value="Asia/Shanghai">Asia/Shanghai</option>
-                                    <option value="America/New_York">America/New_York</option>
-                                    <option value="Europe/London">Europe/London</option>
-                                    <option value="Asia/Tokyo">Asia/Tokyo</option>
-                                </select>
-                                <small class="text-muted">Select timezone for message timestamps and system clock</small>
-                            </div>
-
-                            <!-- 同步频道按钮 -->
-                            <div class="mb-3">
-                                <label class="form-label">Channel Management</label>
-                                <button class="btn btn-primary w-100 mb-2" @click="syncChannels" :disabled="isSyncing">
-                                    {{ isSyncing ? '同步中...' : '同步频道列表' }}
-                                </button>
-                                <button class="btn btn-warning w-100 mb-2" @click="resetChannels" :disabled="isSyncing">
-                                    {{ isSyncing ? '重置中...' : '重置所有频道' }}
-                                </button>
-                                <small class="text-muted">同步可访问的频道，自动跳过无权限频道</small>
-                            </div>
-
-                            <!-- 历史消息同步 -->
-                            <div class="mb-3">
-                                <label class="form-label">Sync History Messages</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" v-model="historyMessageCount" placeholder="Number of messages">
-                                    <button class="btn btn-primary" @click="syncHistoryMessages" :disabled="isSyncing">
-                                        {{ isSyncing ? 'Syncing...' : 'Sync' }}
+                    <div class="card-body message-list" ref="messageList">
+                        <div v-if="selectedChannel">
+                            <div v-for="message in messages" :key="message.id" class="message-item">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <strong v-text="message.author_name"></strong>
+                                        <small class="text-muted ms-2" v-text="formatMessageTime(message.created_at)"></small>
+                                    </div>
+                                    <button v-if="devMode" 
+                                            class="btn btn-outline-danger btn-sm"
+                                            @click="deleteMessage(message.id)">
+                                        Delete
                                     </button>
                                 </div>
-                                <small class="text-muted">Enter the number of messages to sync from each channel</small>
+                                <div class="mt-2" v-text="message.content"></div>
                             </div>
+                            <div v-if="loading" class="text-center mt-3">Loading...</div>
+                        </div>
+                        <div v-else class="text-center mt-3">
+                            Please select a channel to view messages
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-                            <!-- 清除数据库 -->
-                            <div class="mb-3">
-                                <label class="form-label">Database Operations</label>
-                                <button class="btn btn-danger w-100" @click="clearDatabase">
-                                    Clear All Messages
-                                </button>
-                                <small class="text-muted">This will delete all messages from the database</small>
+        <!-- 开发者模式面板 -->
+        <div v-if="devMode" class="row mt-4">
+            <!-- 系统日志 -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        System Logs
+                        <button class="btn btn-sm btn-secondary float-end" @click="clearSystemLogs">Clear</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="log-container" ref="systemLogContainer">
+                            <div v-for="(log, index) in systemLogs" :key="index" class="log-entry">
+                                {{ log }}
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 消息日志 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        Message Logs
+                        <button class="btn btn-sm btn-secondary float-end" @click="clearMessageLogs">Clear</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="log-container" ref="messageLogContainer">
+                            <div v-for="(log, index) in messageLogs" :key="index" class="log-entry">
+                                <span class="badge bg-primary me-2">{{ log.channel }}</span>
+                                <span class="badge bg-secondary me-2">{{ log.author }}</span>
+                                {{ log.content }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 开发者工具 -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        Developer Tools
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Time Zone Settings</label>
+                            <select class="form-select mb-2" 
+                                    :value="selectedTimezone"
+                                    @change="updateTimezone($event.target.value)">
+                                <option value="UTC">UTC</option>
+                                <option value="local">Local Time</option>
+                                <option value="Asia/Shanghai">Asia/Shanghai</option>
+                                <option value="America/New_York">America/New_York</option>
+                                <option value="Europe/London">Europe/London</option>
+                                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                            </select>
+                            <small class="text-muted">Select timezone for message timestamps and system clock</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Channel Management</label>
+                            <button class="btn btn-primary w-100 mb-2" @click="syncChannels" :disabled="isSyncing">
+                                {{ isSyncing ? '同步中...' : '同步频道列表' }}
+                            </button>
+                            <small class="text-muted">同步可访问的频道，自动跳过无权限频道</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Sync History Messages</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" v-model="historyMessageCount" placeholder="Number of messages">
+                                <button class="btn btn-primary" @click="syncHistoryMessages" :disabled="isSyncing">
+                                    {{ isSyncing ? 'Syncing...' : 'Sync' }}
+                                </button>
+                            </div>
+                            <small class="text-muted">Enter the number of messages to sync from each channel</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Database Operations</label>
+                            <button class="btn btn-danger w-100" @click="clearDatabase">
+                                Clear All Messages
+                            </button>
+                            <small class="text-muted">This will delete all messages from the database</small>
                         </div>
                     </div>
                 </div>
@@ -380,8 +439,11 @@
     {% endraw %}
 
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script>
+        Vue.use(ELEMENT);
+        
         new Vue({
             el: '#app',
             data: {
@@ -409,10 +471,14 @@
                 historyMessageCount: 100,
                 isSyncing: false,
                 devMode: false,
-                selectedTimezone: localStorage.getItem('selectedTimezone') || 'local',  // 从localStorage读取时区设置
+                selectedTimezone: 'UTC',
                 utcTime: '',
                 localTime: '',
-                clockInterval: null
+                clockInterval: null,
+                expandedCategories: {},
+                isConnected: false,
+                connectionStatus: '检查中',
+                reconnectAttempts: 0,
             },
             computed: {
                 filteredChannels() {
@@ -426,6 +492,69 @@
                 },
                 hasUnreadMessages() {
                     return Object.values(this.unreadCounts).some(count => count > 0);
+                },
+                groupedChannels() {
+                    if (!this.channels.length) return [];
+                    
+                    // 首先按照 parent_id 分组
+                    const groups = {};
+                    const uncategorized = [];
+                    
+                    // 找出所有分类（包括Discord原生分类和分隔符分类）
+                    this.channels.forEach(channel => {
+                        if (channel.type === 4) { // 分类类型
+                            groups[channel.platform_channel_id] = {
+                                id: channel.platform_channel_id,
+                                name: channel.name,
+                                position: channel.position || 0,
+                                channels: []
+                            };
+                            console.log('Found category:', channel.name);
+                        }
+                    });
+                    
+                    // 将频道分配到对应的分类中
+                    this.channels.forEach(channel => {
+                        // 跳过分类本身和无权限的频道
+                        if (channel.type === 4 || (!channel.is_active && !this.devMode)) {
+                            return;
+                        }
+                        
+                        console.log('Processing channel:', channel.name, 'parent_id:', channel.parent_id);
+                        
+                        // 如果有父分类且该分类存在，添加到分类中
+                        if (channel.parent_id && groups[channel.parent_id]) {
+                            groups[channel.parent_id].channels.push(channel);
+                            console.log('Added to category:', groups[channel.parent_id].name);
+                        } else {
+                            uncategorized.push(channel);
+                            console.log('Added to uncategorized');
+                        }
+                    });
+                    
+                    // 对每个分类中的频道按位置排序
+                    Object.values(groups).forEach(group => {
+                        group.channels.sort((a, b) => (a.position || 0) - (b.position || 0));
+                    });
+                    
+                    // 创建结果数组，包括分类和未分类的频道
+                    const result = Object.values(groups)
+                        .filter(group => group.channels.length > 0)  // 只显示有频道的分类
+                        .sort((a, b) => (a.position || 0) - (b.position || 0));
+                    
+                    console.log('Categories:', result.map(g => g.name));
+                    
+                    // 如果有未分类的频道，添加到最后
+                    if (uncategorized.length > 0) {
+                        result.push({
+                            id: 'uncategorized',
+                            name: '未分类',
+                            position: 999999,
+                            channels: uncategorized.sort((a, b) => (a.position || 0) - (b.position || 0))
+                        });
+                    }
+                    
+                    return result;
                 }
             },
             methods: {
@@ -489,569 +618,653 @@
                                 content: '加载消息失败'
                             });
                         }
-            } catch (error) {
-                this.addMessageLog({
-                    channel: this.selectedChannel?.name || 'Unknown',
-                    author: 'System',
-                    content: '加载消息出错: ' + error.message
-                });
-            } finally {
-                this.loading = false;
-            }
-        },
-        handleScroll(e) {
-            if (!this.selectedChannel || !this.$refs.messageList) return;
-            
-            const element = this.$refs.messageList;
-            const scrollHeight = element.scrollHeight;
-            const scrollTop = Math.ceil(element.scrollTop);
-            const clientHeight = element.clientHeight;
-            const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
-            
-            // 检查是否需要加载更多
-            if (this.hasMore && !this.loading && isNearBottom) {
-                this.loadMessages(this.selectedChannel, true);
-            }
-        },
-        initWebSocket() {
-            this.ws = new WebSocket(`ws://${window.location.host}/ws`);
-            
-            this.ws.onmessage = async (event) => {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'system') {
-                    this.addMessageLog({
-                        channel: 'System',
-                        author: 'System',
-                        content: data.content
-                    });
-                } else if (data.type === 'new_message') {
-                    const channelId = data.channel_id;
+                    } catch (error) {
+                        this.addMessageLog({
+                            channel: this.selectedChannel?.name || 'Unknown',
+                            author: 'System',
+                            content: '加载消息出错: ' + error.message
+                        });
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                handleScroll(e) {
+                    if (!this.selectedChannel || !this.$refs.messageList) return;
                     
-                    // 添加到消息日志
-                    this.addMessageLog({
-                        channel: data.channel_name || 'Unknown Channel',
-                        author: data.author_name,
-                        content: data.content
-                    });
-
-                    // 更新未读消息计数
-                    if (channelId) {
-                        // 如果不是当前选中的频道，增加未读计数
-                        if (!this.selectedChannel || this.selectedChannel.platform_channel_id !== channelId) {
-                            // 获取最新的未读计数
-                            await this.fetchUnreadCounts();
-                        }
+                    const element = this.$refs.messageList;
+                    const scrollHeight = element.scrollHeight;
+                    const scrollTop = Math.ceil(element.scrollTop);
+                    const clientHeight = element.clientHeight;
+                    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
+                    
+                    // 检查是否需要加载更多
+                    if (this.hasMore && !this.loading && isNearBottom) {
+                        this.loadMessages(this.selectedChannel, true);
+                    }
+                },
+                initWebSocket() {
+                    this.ws = new WebSocket(`ws://${window.location.host}/ws`);
+                    
+                    this.ws.onmessage = async (event) => {
+                        const data = JSON.parse(event.data);
                         
-                        // 如果是当前选中的频道，刷新消息列表
-                        if (this.selectedChannel && channelId === this.selectedChannel.platform_channel_id) {
-                            await this.loadMessages(this.selectedChannel);
+                        if (data.type === 'system') {
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: data.content
+                            });
+                        } else if (data.type === 'new_message') {
+                            const channelId = data.channel_id;
+                            
+                            // 添加到消息日志
+                            this.addMessageLog({
+                                channel: data.channel_name || 'Unknown Channel',
+                                author: data.author_name,
+                                content: data.content
+                            });
+
+                            // 更新未读消息计数
+                            if (channelId) {
+                                // 如果不是当前选中的频道，增加未读计数
+                                if (!this.selectedChannel || this.selectedChannel.platform_channel_id !== channelId) {
+                                    // 获取最新的未读计数
+                                    await this.fetchUnreadCounts();
+                                }
+                                
+                                // 如果是当前选中的频道，刷新消息列表
+                                if (this.selectedChannel && channelId === this.selectedChannel.platform_channel_id) {
+                                    await this.loadMessages(this.selectedChannel);
+                                }
+                            }
                         }
-                    }
-                }
-            };
-            
-            this.ws.onclose = () => {
-                this.addMessageLog({
-                    channel: 'System',
-                    author: 'System',
-                    content: 'WebSocket连接已断开，正在重新连接...'
-                });
-                setTimeout(() => this.initWebSocket(), 1000);
-            };
-        },
-        async loadChannels() {
-            try {
-                const url = '/api/channels' + (this.devMode ? '?include_inactive=true' : '');
-                console.log('Loading channels from:', url);
-                
-                const response = await fetch(url);
-                console.log('Response status:', response.status);
-                
-                const data = await response.json();
-                console.log('Received channels data:', data);
-                
-                if (response.ok) {
-                    if (!Array.isArray(data)) {
-                        throw new Error('Invalid response format: expected array');
-                    }
+                    };
                     
-                    // 确保数据更新触发视图更新
-                    this.channels = [];  // 先清空
-                    await this.$nextTick();  // 等待 DOM 更新
-                    this.$set(this, 'channels', data);  // 设置新数据
-                    
-                    const activeCount = data.filter(c => c.is_active).length;
-                    const inactiveCount = data.length - activeCount;
-                    
-                    console.log(`Loaded ${data.length} channels (${activeCount} active, ${inactiveCount} inactive)`);
-                    
-                    this.addMessageLog({
-                        channel: 'System',
-                        author: 'System',
-                        content: `已加载 ${data.length} 个频道 (${activeCount} 个活跃, ${inactiveCount} 个未激活)`
-                    });
-                    
-                    // 初始化每个频道的最后消息时间
-                    data.forEach(channel => {
-                        if (!this.lastMessageTimes[channel.platform_channel_id]) {
-                            this.$set(this.lastMessageTimes, channel.platform_channel_id, new Date().toISOString());
+                    this.ws.onclose = () => {
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: 'WebSocket连接已断开，正在重新连接...'
+                        });
+                        setTimeout(() => this.initWebSocket(), 1000);
+                    };
+                },
+                async loadChannels() {
+                    try {
+                        const url = '/api/channels' + (this.devMode ? '?include_inactive=true' : '');
+                        console.log('Loading channels from:', url);
+                        
+                        const response = await fetch(url);
+                        console.log('Response status:', response.status);
+                        
+                        const data = await response.json();
+                        console.log('Received channels data:', data);
+                        
+                        if (response.ok) {
+                            if (!Array.isArray(data)) {
+                                throw new Error('Invalid response format: expected array');
+                            }
+                            
+                            // 确保数据更新触发视图更新
+                            this.channels = [];  // 先清空
+                            await this.$nextTick();  // 等待 DOM 更新
+                            this.$set(this, 'channels', data);  // 设置新数据
+                            
+                            const activeCount = data.filter(c => c.is_active).length;
+                            const inactiveCount = data.length - activeCount;
+                            
+                            console.log(`Loaded ${data.length} channels (${activeCount} active, ${inactiveCount} inactive)`);
+                            
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: `已加载 ${data.length} 个频道 (${activeCount} 个活跃, ${inactiveCount} 个未激活)`
+                            });
+                            
+                            // 初始化每个频道的最后消息时间
+                            data.forEach(channel => {
+                                if (!this.lastMessageTimes[channel.platform_channel_id]) {
+                                    this.$set(this.lastMessageTimes, channel.platform_channel_id, new Date().toISOString());
+                                }
+                            });
+
+                            // 初始化所有分类为展开状态
+                            data.forEach(channel => {
+                                if (channel.type === 4) {
+                                    this.$set(this.expandedCategories, channel.platform_channel_id, true);
+                                }
+                            });
+                        } else {
+                            throw new Error(`Server returned ${response.status}: ${data.detail || 'Unknown error'}`);
                         }
-                    });
-                } else {
-                    throw new Error(`Server returned ${response.status}: ${data.detail || 'Unknown error'}`);
-                }
-            } catch (error) {
-                console.error('Error loading channels:', error);
-                this.addMessageLog({
-                    channel: 'System',
-                    author: 'System',
-                    content: '加载频道失败: ' + error.message
-                });
-            }
-        },
-        async selectChannel(channel) {
-            console.log('Selecting channel:', channel);
-            this.selectedChannel = channel;
-            this.messages = [];  // 清空当前消息
-            this.currentPage = 1;  // 重置页码
-            this.hasMore = true;  // 重置加载状态
-            
-            // 先加载消息
-            await this.loadMessages(channel);
-            
-            // 然后标记为已读
-            await this.markChannelRead(channel);
-        },
-        async addMessage() {
-            if (!this.newMessage.content || !this.newMessage.author_name) {
-                alert('Please fill in all fields');
-                return;
-            }
-            try {
-                const response = await fetch('/api/messages', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        content: this.newMessage.content,
-                        author_name: this.newMessage.author_name,
-                        channel_id: this.selectedChannel.platform_channel_id
-                    })
-                });
-                if (response.ok) {
-                    // 重新加载消息
-                    await this.selectChannel(this.selectedChannel);
+                    } catch (error) {
+                        console.error('Error loading channels:', error);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '加载频道失败: ' + error.message
+                        });
+                    }
+                },
+                async selectChannel(channel) {
+                    console.log('Selecting channel:', channel);
+                    this.selectedChannel = channel;
+                    this.messages = [];  // 清空当前消息
+                    this.currentPage = 1;  // 重置页码
+                    this.hasMore = true;  // 重置加载状态
+                    
+                    // 先加载消息
+                    await this.loadMessages(channel);
+                    
+                    // 然后标记为已读
+                    await this.markChannelRead(channel);
+                },
+                async addMessage() {
+                    if (!this.newMessage.content) {
+                        alert('Please enter a message');
+                        return;
+                    }
+                    if (!this.newMessage.author_name) {
+                        alert('Please enter author name');
+                        return;
+                    }
+
+                    try {
+                        const messageResponse = await fetch('/api/messages', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                content: this.newMessage.content,
+                                author_name: this.newMessage.author_name,
+                                channel_id: this.selectedChannel.platform_channel_id
+                            })
+                        });
+
+                        if (!messageResponse.ok) {
+                            const errorData = await messageResponse.json();
+                            throw new Error(errorData.detail || 'Failed to send message');
+                        }
+
+                        await this.loadMessages(this.selectedChannel);
+                        this.showAddMessageForm = false;
+                        this.newMessage.content = '';
+                        this.newMessage.author_name = '';
+                        
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '消息发送成功'
+                        });
+                    } catch (error) {
+                        console.error('Error sending message:', error);
+                        const errorMessage = error.message || '未知错误';
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '发送消息出错: ' + errorMessage
+                        });
+                        alert('发送消息失败: ' + errorMessage);
+                    }
+                },
+                cancelAddMessage() {
                     this.showAddMessageForm = false;
                     this.newMessage.content = '';
                     this.newMessage.author_name = '';
-                    this.addMessageLog({
-                        channel: this.selectedChannel.name,
-                        author: 'System',
-                        content: '消息发送成功'
-                    });
-                } else {
-                    this.addMessageLog({
-                        channel: this.selectedChannel.name,
-                        author: 'System',
-                        content: '发送消息失败'
-                    });
-                }
-            } catch (error) {
-                this.addMessageLog({
-                    channel: this.selectedChannel.name,
-                    author: 'System',
-                    content: '发送消息出错: ' + error.message
-                });
-            }
-        },
-        cancelAddMessage() {
-            this.showAddMessageForm = false;
-            this.newMessage.content = '';
-            this.newMessage.author_name = '';
-        },
-        async deleteMessage(messageId) {
-            if (!confirm('Are you sure you want to delete this message?')) {
-                return;
-            }
-            try {
-                const response = await fetch(`/api/messages/${messageId}`, {
-                    method: 'DELETE'
-                });
-                if (response.ok) {
-                    // 重新加载消息
-                    await this.selectChannel(this.selectedChannel);
-                    this.addMessageLog({
-                        channel: this.selectedChannel.name,
-                        author: 'System',
-                        content: '消息删除成功'
-                    });
-                } else {
-                    this.addMessageLog({
-                        channel: this.selectedChannel.name,
-                        author: 'System',
-                        content: '删除消息失败'
-                    });
-                }
-            } catch (error) {
-                this.addMessageLog({
-                    channel: this.selectedChannel.name,
-                    author: 'System',
-                    content: '删除消息出错: ' + error.message
-                });
-            }
-        },
-        addSystemLog(log) {
-            const timestamp = new Date().toLocaleTimeString();
-            this.systemLogs.push(`[${timestamp}] ${log}`);
-            this.$nextTick(() => {
-                if (this.$refs.systemLogContainer) {
-                    this.$refs.systemLogContainer.scrollTop = this.$refs.systemLogContainer.scrollHeight;
-                }
-            });
-        },
-        addMessageLog(message) {
-            this.messageLogs.unshift(message);
-            // Keep only the last 100 messages
-            if (this.messageLogs.length > 100) {
-                this.messageLogs.pop();
-            }
-        },
-        updateUnreadCount(channelId, count) {
-            this.$set(this.unreadCounts, channelId, count);
-        },
-        clearSystemLogs() {
-            this.systemLogs = [];
-        },
-        clearMessageLogs() {
-            this.messageLogs = [];
-        },
-        async syncHistoryMessages() {
-            if (!this.historyMessageCount || this.historyMessageCount <= 0) {
-                alert('Please enter a valid number of messages');
-                return;
-            }
-
-            if (!confirm(`Are you sure you want to sync ${this.historyMessageCount} messages from each channel? This may take a while.`)) {
-                return;
-            }
-
-            this.isSyncing = true;
-            try {
-                const response = await fetch('/api/messages/sync-history', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        message_count: parseInt(this.historyMessageCount)
-                    })
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    this.addMessageLog({
-                        channel: 'Developer',
-                        author: 'System',
-                        content: `Successfully synced ${result.total_messages} messages from ${result.channel_count} channels`
-                    });
-                } else {
-                    throw new Error('Failed to sync messages');
-                }
-            } catch (error) {
-                this.addMessageLog({
-                    channel: 'Developer',
-                    author: 'System',
-                    content: `Error syncing messages: ${error.message}`
-                });
-            } finally {
-                this.isSyncing = false;
-            }
-        },
-        async clearDatabase() {
-            if (!confirm('Are you sure you want to delete ALL messages from the database? This action cannot be undone!')) {
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/messages/clear-all', {
-                    method: 'POST'
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    this.addMessageLog({
-                        channel: 'Developer',
-                        author: 'System',
-                        content: `Successfully deleted ${result.deleted_count} messages`
-                    });
-                    // 刷新当前频道的消息
-                    if (this.selectedChannel) {
-                        await this.loadMessages(this.selectedChannel);
+                },
+                async deleteMessage(messageId) {
+                    if (!confirm('Are you sure you want to delete this message?')) {
+                        return;
                     }
-                } else {
-                    throw new Error('Failed to clear database');
-                }
-            } catch (error) {
-                this.addMessageLog({
-                    channel: 'Developer',
-                    author: 'System',
-                    content: `Error clearing database: ${error.message}`
-                });
-            }
-        },
-        toggleDevMode() {
-            this.devMode = !this.devMode;
-            if (this.devMode) {
-                this.startClocks();
-            } else {
-                this.stopClocks();
-            }
-        },
-        async syncChannels() {
-            if (!confirm('确定要同步频道列表吗？这将更新所有频道的状态。')) {
-                return;
-            }
-            
-            this.isSyncing = true;
-            try {
-                const response = await fetch('/api/channels/sync', {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    this.addMessageLog({
-                        channel: 'System',
-                        author: 'System',
-                        content: `频道同步完成: ${result.accessible_count} 个可访问频道, ${result.inaccessible_count} 个无权限频道`
-                    });
-                    
-                    // 立即重新加载频道列表
-                    const channelsResponse = await fetch('/api/channels' + (this.devMode ? '?include_inactive=true' : ''));
-                    if (channelsResponse.ok) {
-                        const channels = await channelsResponse.json();
-                        console.log('Reloaded channels:', channels);
-                        this.channels = channels;  // 直接更新数据
+                    try {
+                        const response = await fetch(`/api/messages/${messageId}`, {
+                            method: 'DELETE'
+                        });
                         
-                        // 如果当前选中的频道变为无权限，清空选中状态
-                        if (this.selectedChannel && !channels.find(c => 
-                            c.id === this.selectedChannel.id && c.is_active
-                        )) {
-                            this.selectedChannel = null;
-                            this.messages = [];
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || 'Failed to delete message');
+                        }
+                        
+                        // 从当前消息列表中移除该消息
+                        this.messages = this.messages.filter(msg => msg.id !== messageId);
+                        
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '消息删除成功'
+                        });
+                    } catch (error) {
+                        console.error('Error deleting message:', error);
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '删除消息出错: ' + error.message
+                        });
+                        alert('删除消息失败: ' + error.message);
+                    }
+                },
+                addSystemLog(log) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    this.systemLogs.push(`[${timestamp}] ${log}`);
+                    this.$nextTick(() => {
+                        if (this.$refs.systemLogContainer) {
+                            this.$refs.systemLogContainer.scrollTop = this.$refs.systemLogContainer.scrollHeight;
+                        }
+                    });
+                },
+                addMessageLog(message) {
+                    this.messageLogs.unshift(message);
+                    // Keep only the last 100 messages
+                    if (this.messageLogs.length > 100) {
+                        this.messageLogs.pop();
+                    }
+                },
+                updateUnreadCount(channelId, count) {
+                    this.$set(this.unreadCounts, channelId, count);
+                },
+                clearSystemLogs() {
+                    this.systemLogs = [];
+                },
+                clearMessageLogs() {
+                    this.messageLogs = [];
+                },
+                async syncHistoryMessages() {
+                    if (!this.historyMessageCount || this.historyMessageCount <= 0) {
+                        alert('Please enter a valid number of messages');
+                        return;
+                    }
+
+                    if (!confirm(`Are you sure you want to sync ${this.historyMessageCount} messages from each channel? This may take a while.`)) {
+                        return;
+                    }
+
+                    this.isSyncing = true;
+                    try {
+                        const response = await fetch('/api/messages/sync-history', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                message_count: parseInt(this.historyMessageCount)
+                            })
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.addMessageLog({
+                                channel: 'Developer',
+                                author: 'System',
+                                content: `Successfully synced ${result.total_messages} messages from ${result.channel_count} channels`
+                            });
+                        } else {
+                            throw new Error('Failed to sync messages');
+                        }
+                    } catch (error) {
+                        this.addMessageLog({
+                            channel: 'Developer',
+                            author: 'System',
+                            content: `Error syncing messages: ${error.message}`
+                        });
+                    } finally {
+                        this.isSyncing = false;
+                    }
+                },
+                async clearDatabase() {
+                    if (!confirm('Are you sure you want to delete ALL messages from the database? This action cannot be undone!')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch('/api/messages/clear-all', {
+                            method: 'POST'
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.addMessageLog({
+                                channel: 'Developer',
+                                author: 'System',
+                                content: `Successfully deleted ${result.deleted_count} messages`
+                            });
+                            // 刷新当前频道的消息
+                            if (this.selectedChannel) {
+                                await this.loadMessages(this.selectedChannel);
+                            }
+                        } else {
+                            throw new Error('Failed to clear database');
+                        }
+                    } catch (error) {
+                        this.addMessageLog({
+                            channel: 'Developer',
+                            author: 'System',
+                            content: `Error clearing database: ${error.message}`
+                        });
+                    }
+                },
+                toggleDevMode() {
+                    this.devMode = !this.devMode;
+                    if (this.devMode) {
+                        this.startClocks();
+                    } else {
+                        this.stopClocks();
+                    }
+                },
+                async syncChannels() {
+                    if (!confirm('确定要同步频道列表吗？这将更新所有频道的状态。')) {
+                        return;
+                    }
+                    
+                    this.isSyncing = true;
+                    try {
+                        const response = await fetch('/api/channels/sync', {
+                            method: 'POST'
+                        });
+                        
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: `频道同步完成: ${result.accessible_count} 个可访问频道, ${result.inaccessible_count} 个无权限频道`
+                            });
+                            
+                            // 立即重新加载频道列表
+                            const channelsResponse = await fetch('/api/channels' + (this.devMode ? '?include_inactive=true' : ''));
+                            if (channelsResponse.ok) {
+                                const channels = await channelsResponse.json();
+                                console.log('Reloaded channels:', channels);
+                                this.channels = channels;  // 直接更新数据
+                                
+                                // 如果当前选中的频道变为无权限，清空选中状态
+                                if (this.selectedChannel && !channels.find(c => 
+                                    c.id === this.selectedChannel.id && c.is_active
+                                )) {
+                                    this.selectedChannel = null;
+                                    this.messages = [];
+                                }
+                            }
+                        } else {
+                            throw new Error('同步失败');
+                        }
+                    } catch (error) {
+                        console.error('Sync error:', error);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '同步频道失败: ' + error.message
+                        });
+                    } finally {
+                        this.isSyncing = false;
+                    }
+                },
+                async refreshMessages() {
+                    if (!this.selectedChannel || this.loading) return;
+                    
+                    // 重置状态
+                    this.messages = [];
+                    this.currentPage = 1;
+                    this.hasMore = true;
+                    
+                    // 重新加载消息
+                    await this.loadMessages(this.selectedChannel);
+                    
+                    if (this.devMode) {
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '手动刷新消息完成'
+                        });
+                    }
+                },
+                formatMessageTime(timestamp) {
+                    try {
+                        const date = new Date(timestamp);
+                        if (this.selectedTimezone === 'UTC') {
+                            return date.toISOString();
+                        } else if (this.selectedTimezone === 'local') {
+                            return date.toLocaleString();
+                        } else {
+                            return date.toLocaleString('en-US', { timeZone: this.selectedTimezone });
+                        }
+                    } catch (e) {
+                        console.error('Error formatting time:', e);
+                        return timestamp;
+                    }
+                },
+                updateClocks() {
+                    const now = new Date();
+                    
+                    // 格式化UTC时间
+                    const utcOptions = {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: 'UTC'
+                    };
+                    this.utcTime = now.toLocaleString('en-US', utcOptions).replace(',', '');
+                    
+                    // 格式化选定时区的时间
+                    const localOptions = {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: this.selectedTimezone === 'local' ? undefined : this.selectedTimezone
+                    };
+                    this.localTime = now.toLocaleString('en-US', localOptions).replace(',', '');
+                },
+                startClocks() {
+                    this.updateClocks();
+                    if (this.clockInterval) {
+                        clearInterval(this.clockInterval);
+                    }
+                    this.clockInterval = setInterval(() => {
+                        requestAnimationFrame(() => {
+                            this.updateClocks();
+                        });
+                    }, 1000);
+                },
+                stopClocks() {
+                    if (this.clockInterval) {
+                        clearInterval(this.clockInterval);
+                        this.clockInterval = null;
+                    }
+                },
+                // 更新时区设置
+                updateTimezone(timezone) {
+                    this.selectedTimezone = timezone;
+                    localStorage.setItem('selectedTimezone', timezone);
+                    this.updateClocks();
+                },
+                async fetchUnreadCounts() {
+                    try {
+                        const response = await fetch('/api/messages/unread-counts');
+                        if (response.ok) {
+                            this.unreadCounts = await response.json();
+                        }
+                    } catch (error) {
+                        console.error('Error fetching unread counts:', error);
+                    }
+                },
+                async markChannelRead(channel) {
+                    if (!channel) return;
+                    try {
+                        const response = await fetch(`/api/messages/mark-channel-read/${channel.platform_channel_id}`, {
+                            method: 'POST'
+                        });
+                        if (response.ok) {
+                            this.unreadCounts[channel.platform_channel_id] = 0;
+                        }
+                    } catch (error) {
+                        console.error('Error marking channel as read:', error);
+                    }
+                },
+                async markAllChannelsRead() {
+                    try {
+                        const response = await fetch('/api/channels/mark-all-read', {
+                            method: 'POST'
+                        });
+                        if (response.ok) {
+                            // 更新所有未读计数为0
+                            Object.keys(this.unreadCounts).forEach(channelId => {
+                                this.$set(this.unreadCounts, channelId, 0);
+                            });
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: '已清除所有未读消息'
+                            });
+                        } else {
+                            throw new Error('Failed to mark all channels as read');
+                        }
+                    } catch (error) {
+                        console.error('Error marking all channels as read:', error);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '清除未读消息失败: ' + error.message
+                        });
+                    }
+                },
+                toggleCategory(categoryId) {
+                    this.$set(this.expandedCategories, categoryId, !this.expandedCategories[categoryId]);
+                },
+                openImageInNewTab(url) {
+                    window.open(url, '_blank');
+                },
+                async setupWebSocket() {
+                    try {
+                        this.ws = new WebSocket(`ws://${window.location.host}/ws`);
+                        
+                        this.ws.onopen = () => {
+                            this.isConnected = true;
+                            this.$notify({
+                                title: '连接成功',
+                                message: '已成功连接到服务器',
+                                type: 'success',
+                                duration: 2000
+                            });
+                        };
+                        
+                        this.ws.onclose = () => {
+                            this.isConnected = false;
+                            setTimeout(this.setupWebSocket, 5000);
+                        };
+                        
+                        this.ws.onerror = (error) => {
+                            console.error('WebSocket error:', error);
+                            this.isConnected = false;
+                        };
+                        
+                        this.ws.onmessage = this.handleWebSocketMessage;
+                    } catch (error) {
+                        console.error('Setup WebSocket error:', error);
+                        this.isConnected = false;
+                        setTimeout(this.setupWebSocket, 5000);
+                    }
+                },
+                startPingCheck() {
+                    this.pingInterval = setInterval(async () => {
+                        try {
+                            const response = await fetch('/api/ping');
+                            const wasConnected = this.isConnected;
+                            this.isConnected = response.ok;
+                            
+                            if (!wasConnected && this.isConnected) {
+                                this.$notify({
+                                    title: '连接恢复',
+                                    message: '服务器连接已恢复',
+                                    type: 'success',
+                                    duration: 2000
+                                });
+                            }
+                        } catch (error) {
+                            this.isConnected = false;
+                            console.error('Ping error:', error);
+                        }
+                    }, 5000);
+                },
+                startMessageCheck() {
+                    this.messageCheckInterval = setInterval(async () => {
+                        await this.fetchUnreadCounts();
+                        if (this.selectedChannel) {
+                            await this.loadMessages(this.selectedChannel);
+                        }
+                    }, 10000);  // 每10秒刷新一次
+                },
+                handleWebSocketMessage(event) {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'new_message') {
+                        if (this.selectedChannel && this.selectedChannel.platform_channel_id === data.channel_id) {
+                            // 如果当前正在查看该频道，则添加消息
+                            this.messages.push({
+                                id: data.id,
+                                content: data.content,
+                                author_name: data.author_name,
+                                created_at: data.created_at
+                            });
+                            this.$nextTick(() => {
+                                this.scrollToBottom();
+                            });
+                        } else {
+                            // 如果不是当前频道，增加未读计数
+                            this.unreadCounts[data.channel_id] = (this.unreadCounts[data.channel_id] || 0) + 1;
                         }
                     }
-                } else {
-                    throw new Error('同步失败');
-                }
-            } catch (error) {
-                console.error('Sync error:', error);
-                this.addMessageLog({
-                    channel: 'System',
-                    author: 'System',
-                    content: '同步频道失败: ' + error.message
-                });
-            } finally {
-                this.isSyncing = false;
-            }
-        },
-        async resetChannels() {
-            if (!confirm('确定要重置所有频道吗？这将删除所有频道记录并重新同步。')) {
-                return;
-            }
-            
-            this.isSyncing = true;
-            try {
-                const response = await fetch('/api/channels/reset', {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    this.addMessageLog({
-                        channel: 'System',
-                        author: 'System',
-                        content: `频道重置完成: ${result.accessible_count} 个可访问频道, ${result.inaccessible_count} 个无权限频道`
-                    });
-                    
-                    // 重新加载频道列表
-                    await this.loadChannels();
-                    
-                    // 清空当前选中的频道
-                    this.selectedChannel = null;
-                    this.messages = [];
-                } else {
-                    const errorData = await response.json();
-                    throw new Error(errorData.detail || '重置失败');
-                }
-            } catch (error) {
-                console.error('Reset error:', error);
-                this.addMessageLog({
-                    channel: 'System',
-                    author: 'System',
-                    content: '重置频道失败: ' + error.message
-                });
-            } finally {
-                this.isSyncing = false;
-            }
-        },
-        async refreshMessages() {
-            if (!this.selectedChannel || this.loading) return;
-            
-            // 重置状态
-            this.messages = [];
-            this.currentPage = 1;
-            this.hasMore = true;
-            
-            // 重新加载消息
-            await this.loadMessages(this.selectedChannel);
-            
-            if (this.devMode) {
-                this.addMessageLog({
-                    channel: this.selectedChannel.name,
-                    author: 'System',
-                    content: '手动刷新消息完成'
-                });
-            }
-        },
-        formatMessageTime(timestamp) {
-            try {
-                const date = new Date(timestamp);
-                if (this.selectedTimezone === 'UTC') {
-                    return date.toISOString();
-                } else if (this.selectedTimezone === 'local') {
+                },
+                async resetChannels() {
+                    try {
+                        const response = await fetch('/api/channels/reset', { method: 'POST' });
+                        if (!response.ok) {
+                            throw new Error('重置频道失败');
+                        }
+                        alert('重置成功，请点击同步按钮更新频道列表');
+                    } catch (error) {
+                        console.error('重置频道失败:', error);
+                        alert('重置频道失败');
+                    }
+                },
+                scrollToBottom() {
+                    const container = this.$refs.messageList;
+                    container.scrollTop = container.scrollHeight;
+                },
+                formatDate(dateString) {
+                    const date = new Date(dateString);
                     return date.toLocaleString();
-                } else {
-                    return date.toLocaleString('en-US', { timeZone: this.selectedTimezone });
                 }
-            } catch (e) {
-                console.error('Error formatting time:', e);
-                return timestamp;
-            }
-        },
-        updateClocks() {
-            const now = new Date();
-            
-            // 格式化UTC时间
-            const utcOptions = {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false,
-                timeZone: 'UTC'
-            };
-            this.utcTime = now.toLocaleString('en-US', utcOptions).replace(',', '');
-            
-            // 格式化选定时区的时间
-            const localOptions = {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false,
-                timeZone: this.selectedTimezone === 'local' ? undefined : this.selectedTimezone
-            };
-            this.localTime = now.toLocaleString('en-US', localOptions).replace(',', '');
-        },
-        startClocks() {
-            this.updateClocks();
-            if (this.clockInterval) {
-                clearInterval(this.clockInterval);
-            }
-            this.clockInterval = setInterval(() => {
-                requestAnimationFrame(() => {
+            },
+            watch: {
+                selectedTimezone() {
+                    // 当时区改变时，更新时钟显示
                     this.updateClocks();
-                });
-            }, 1000);
-        },
-        stopClocks() {
-            if (this.clockInterval) {
-                clearInterval(this.clockInterval);
-                this.clockInterval = null;
-            }
-        },
-        // 更新时区设置
-        updateTimezone(timezone) {
-            this.selectedTimezone = timezone;
-            localStorage.setItem('selectedTimezone', timezone);
-            this.updateClocks();
-        },
-        async fetchUnreadCounts() {
-            try {
-                const response = await fetch('/api/messages/unread-counts');
-                if (response.ok) {
-                    this.unreadCounts = await response.json();
                 }
-            } catch (error) {
-                console.error('Error fetching unread counts:', error);
-            }
-        },
-        async markChannelRead(channel) {
-            if (!channel) return;
-            try {
-                const response = await fetch(`/api/messages/mark-channel-read/${channel.platform_channel_id}`, {
-                    method: 'POST'
-                });
-                if (response.ok) {
-                    this.unreadCounts[channel.platform_channel_id] = 0;
+            },
+            created() {
+                this.startClocks(); // 启动时钟
+                this.setupWebSocket();
+                this.startPingCheck();
+                this.loadChannels();
+            },
+            beforeDestroy() {
+                this.stopClocks();
+                if (this.messageCheckInterval) {
+                    clearInterval(this.messageCheckInterval);
                 }
-            } catch (error) {
-                console.error('Error marking channel as read:', error);
-            }
-        },
-        async markAllChannelsRead() {
-            try {
-                const response = await fetch('/api/messages/mark-all-read', {
-                    method: 'POST'
-                });
-                if (response.ok) {
-                    this.unreadCounts = {};
+                if (this.ws) {
+                    this.ws.close();
                 }
-            } catch (error) {
-                console.error('Error marking all channels as read:', error);
             }
-        },
-    },
-    watch: {
-        selectedTimezone() {
-            // 当时区改变时，更新时钟显示
-            this.updateClocks();
-        }
-    },
-    async mounted() {
-        this.startClocks(); // 启动时钟
-        await this.loadChannels();
-        this.initWebSocket();
-        
-        // 每5秒检查一次未读消息
-        setInterval(async () => {
-            await this.fetchUnreadCounts();
-        }, 5000);
-        
-        // 如果有选中的频道，每10秒刷新一次消息
-        setInterval(async () => {
-            if (this.selectedChannel) {
-                await this.loadMessages(this.selectedChannel);
-            }
-        }, 10000);
-    },
-    beforeDestroy() {
-        this.stopClocks();
-        if (this.messageCheckInterval) {
-            clearInterval(this.messageCheckInterval);
-        }
-        if (this.ws) {
-            this.ws.close();
-        }
-    }
-});
+        });
     </script>
 </body>
 </html> 

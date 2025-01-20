@@ -98,4 +98,9 @@ async def websocket_endpoint(websocket: WebSocket):
         discord_client.unregister_websocket(websocket)
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
-        discord_client.unregister_websocket(websocket) 
+        discord_client.unregister_websocket(websocket)
+
+@app.get("/api/ping")
+async def ping():
+    """Check backend connectivity"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()} 

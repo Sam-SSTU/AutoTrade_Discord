@@ -194,14 +194,16 @@ class DiscordClient:
     async def sync_channels_to_db(self, db: Session):
         """同步频道信息到数据库，检查权限并标记不可访问的频道"""
         try:
+            message_logger.info("开始同步频道...")
             await self._create_session()
             accessible_count = 0
             inaccessible_count = 0
             
             # 获取用户所在的所有服务器
+            message_logger.info("正在获取服务器列表...")
             async with self.session.get('https://discord.com/api/v9/users/@me/guilds') as response:
                 if response.status != 200:
-                    message_logger.error("获取服务器列表失败")
+                    message_logger.error(f"获取服务器列表失败: HTTP {response.status}")
                     raise Exception("Failed to fetch guilds")
                     
                 guilds = await response.json()
@@ -210,27 +212,60 @@ class DiscordClient:
                 for guild in guilds:
                     guild_id = guild['id']
                     guild_name = guild['name']
-                    message_logger.info(f"正在处理服务器: {guild_name}")
+                    message_logger.info(f"正在处理服务器: {guild_name} (ID: {guild_id})")
                     
                     # 获取服务器中的所有频道
+                    message_logger.info(f"正在获取服务器 {guild_name} 的频道列表...")
                     async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels') as channels_response:
                         if channels_response.status != 200:
-                            message_logger.error(f"获取服务器 {guild_name} 的频道列表失败")
+                            message_logger.error(f"获取服务器 {guild_name} 的频道列表失败: HTTP {channels_response.status}")
                             continue
                             
                         channels = await channels_response.json()
-                        text_channels = [c for c in channels if c.get('type') == 0]
-                        message_logger.info(f"服务器 {guild_name} 中发现 {len(text_channels)} 个文字频道")
+                        message_logger.info(f"在服务器 {guild_name} 中发现 {len(channels)} 个频道")
                         
-                        for channel_data in text_channels:
+                        # 创建一个映射来存储分类信息
+                        categories = {}
+                        
+                        # 首先处理所有Discord分类
+                        category_count = 0
+                        for channel in channels:
+                            if channel.get('type') == 4:  # Discord分类
+                                categories[channel['id']] = channel
+                                category_count += 1
+                        
+                        message_logger.info(f"发现 {category_count} 个分类")
+                        
+                        # 处理所有频道
+                        for channel_data in channels:
                             try:
                                 channel_id = channel_data.get('id')
                                 channel_name = channel_data.get('name', '未知频道')
+                                channel_type = channel_data.get('type', 0)
+                                parent_id = channel_data.get('parent_id')
+                                position = channel_data.get('position', 0)
                                 
-                                message_logger.info(f"正在检查频道权限: {channel_name}")
+                                message_logger.info(f"处理频道: {channel_name} (ID: {channel_id}, 类型: {channel_type})")
                                 
-                                # 检查频道权限
-                                has_access = await self._check_channel_access(channel_id)
+                                # 如果是语音频道，跳过
+                                if channel_type == 2:
+                                    message_logger.info(f"跳过语音频道: {channel_name}")
+                                    continue
+                                
+                                # 检查频道权限（只检查文字频道）
+                                has_access = True if channel_type == 4 else await self._check_channel_access(channel_id)
+                                message_logger.info(f"频道 {channel_name} 权限检查结果: {'有权限' if has_access else '无权限'}")
+                                
+                                # 获取分类名称
+                                category_name = None
+                                if parent_id and parent_id in categories:
+                                    category_name = categories[parent_id].get('name')
+                                    message_logger.info(f"频道 {channel_name} 属于分类: {category_name}")
+                                # 如果是分隔符频道，将其作为一个分类
+                                elif '-' in channel_name and any(c.isspace() for c in channel_name):
+                                    channel_type = 4  # 将分隔符视为分类
+                                    has_access = True  # 分类总是可访问的
+                                    message_logger.info(f"将分隔符频道作为分类处理: {channel_name}")
                                 
                                 # 检查频道是否已存在
                                 channel = db.query(Channel).filter(
@@ -238,56 +273,50 @@ class DiscordClient:
                                 ).first()
                                 
                                 if not channel:
+                                    message_logger.info(f"创建新频道记录: {channel_name}")
                                     channel = Channel(
                                         platform_channel_id=str(channel_id),
                                         name=channel_name,
                                         guild_id=str(guild_id),
                                         guild_name=guild_name,
+                                        type=channel_type,
+                                        parent_id=parent_id,
+                                        position=position,
+                                        category_name=category_name,
                                         is_active=has_access
                                     )
                                     db.add(channel)
-                                    if has_access:
-                                        message_logger.info(f"添加新频道: {channel_name}")
-                                    else:
-                                        message_logger.info(f"添加无权限频道: {channel_name}")
                                 else:
-                                    # 更新频道状态
-                                    old_status = channel.is_active
+                                    message_logger.info(f"更新现有频道: {channel_name}")
+                                    channel.name = channel_name
+                                    channel.type = channel_type
+                                    channel.parent_id = parent_id
+                                    channel.position = position
+                                    channel.category_name = category_name
                                     channel.is_active = has_access
-                                    if old_status != has_access:
-                                        if has_access:
-                                            message_logger.info(f"频道已重新激活: {channel_name}")
-                                        else:
-                                            message_logger.info(f"频道已失去权限: {channel_name}")
-                                    else:
-                                        message_logger.info(f"频道状态未变: {channel_name} ({'有权限' if has_access else '无权限'})")
-                                            
-                                if has_access:
+                                
+                                if has_access and channel_type != 4:
                                     accessible_count += 1
-                                else:
+                                elif channel_type != 4:
                                     inaccessible_count += 1
                                 
-                                # 立即提交每个频道的更改
                                 db.commit()
+                                message_logger.info(f"频道 {channel_name} 处理完成")
                                 
                             except Exception as e:
-                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}")
+                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}\n{traceback.format_exc()}")
                                 db.rollback()
                                 continue
-                    
-                    # 每个服务器处理完后等待一下，避免触发限制
-                    await asyncio.sleep(1)
-                
-                message_logger.info(f"频道同步完成: {accessible_count} 个可访问, {inaccessible_count} 个无权限")
-                return {
-                    "accessible_count": accessible_count,
-                    "inaccessible_count": inaccessible_count
-                }
-                
+            
+            message_logger.info(f"频道同步完成: {accessible_count} 个可访问频道, {inaccessible_count} 个无权限频道")
+            return {
+                "accessible_count": accessible_count,
+                "inaccessible_count": inaccessible_count
+            }
+            
         except Exception as e:
-            message_logger.error(f"同步频道信息出错: {str(e)}")
-            db.rollback()
-            raise
+            message_logger.error(f"同步频道时出错: {str(e)}\n{traceback.format_exc()}")
+            raise e
 
     async def _check_channel_access(self, channel_id: str) -> bool:
         """检查是否有权限访问频道"""
@@ -474,6 +503,34 @@ class DiscordClient:
         except Exception as e:
             message_logger.error("获取用户信息出错")
             return {}
+
+    async def _store_attachment(self, attachment_data: Dict[str, Any], message_id: int, db: Session) -> None:
+        """Store a message attachment in the database"""
+        try:
+            # Download the attachment
+            async with self.session.get(attachment_data['url']) as response:
+                if response.status != 200:
+                    message_logger.error(f"Failed to download attachment: {attachment_data['filename']}")
+                    return
+                
+                file_data = await response.read()
+                
+                # Create new attachment record
+                attachment = Attachment(
+                    message_id=message_id,
+                    filename=attachment_data['filename'],
+                    content_type=attachment_data.get('content_type', 'application/octet-stream'),
+                    file_data=file_data
+                )
+                
+                db.add(attachment)
+                db.commit()
+                
+                message_logger.info(f"Successfully stored attachment: {attachment_data['filename']}")
+                
+        except Exception as e:
+            message_logger.error(f"Error storing attachment: {str(e)}")
+            db.rollback()
 
     def register_websocket(self, websocket):
         """Register a WebSocket connection"""
