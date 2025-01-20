@@ -62,6 +62,12 @@
         .badge {
             font-size: 0.8em;
         }
+        .message-list {
+            max-height: 600px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* 增加iOS滚动支持 */
+            scroll-behavior: smooth; /* 平滑滚动 */
+        }
     </style>
 </head>
 <body>
@@ -112,12 +118,26 @@
                         <div class="card-header">
                             <div class="d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">Messages {{ selectedChannel ? '- ' + selectedChannel.name : '' }}</h5>
-                                <button v-if="selectedChannel" class="btn btn-sm btn-success" @click="showAddMessageForm = true">
-                                    Add Message
-                                </button>
+                                <div>
+                                    <button v-if="selectedChannel" 
+                                            class="btn btn-sm btn-outline-primary me-2" 
+                                            @click="refreshMessages"
+                                            :disabled="loading">
+                                        <span v-if="loading">刷新中...</span>
+                                        <span v-else>刷新消息</span>
+                                    </button>
+                                    <button v-if="selectedChannel" 
+                                            class="btn btn-sm btn-success" 
+                                            @click="showAddMessageForm = true">
+                                        Add Message
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div class="card-body message-list" @scroll="handleScroll">
+                        <div class="card-body message-list" 
+                             @scroll.passive="handleScroll" 
+                             ref="messageList"
+                             style="min-height: 400px;">
                             <div v-if="showAddMessageForm" class="mb-3 p-3 border rounded">
                                 <div class="mb-2">
                                     <label class="form-label">Message Content:</label>
@@ -351,12 +371,31 @@
                                 this.messages = data.messages;
                                 this.currentPage = 1;
                             }
-                            this.hasMore = data.has_more;
-                            this.addMessageLog({
-                                channel: channel.name,
-                                author: 'System',
-                                content: `加载了${data.messages.length}条消息`
-                            });
+                            
+                            // 根据总数和当前加载的消息数来判断是否还有更多
+                            const totalLoaded = this.messages.length;
+                            this.hasMore = totalLoaded < data.total;
+                            
+                            if (this.devMode) {
+                                this.addMessageLog({
+                                    channel: channel.name,
+                                    author: 'System',
+                                    content: `加载了${data.messages.length}条消息，当前页${page}，已加载${totalLoaded}/${data.total}条`
+                                });
+                                console.log('Load messages response:', {
+                                    messages: data.messages.length,
+                                    page,
+                                    hasMore: this.hasMore,
+                                    totalLoaded,
+                                    total: data.total
+                                });
+                            } else {
+                                this.addMessageLog({
+                                    channel: channel.name,
+                                    author: 'System',
+                                    content: `加载了${data.messages.length}条消息`
+                                });
+                            }
                         } else {
                             this.addMessageLog({
                                 channel: channel.name,
@@ -375,9 +414,16 @@
                     }
                 },
                 handleScroll(e) {
-                    const element = e.target;
-                    if (this.hasMore && !this.loading && 
-                        element.scrollHeight - element.scrollTop <= element.clientHeight + 100) {
+                    if (!this.selectedChannel || !this.$refs.messageList) return;
+                    
+                    const element = this.$refs.messageList;
+                    const scrollHeight = element.scrollHeight;
+                    const scrollTop = Math.ceil(element.scrollTop);
+                    const clientHeight = element.clientHeight;
+                    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
+                    
+                    // 检查是否需要加载更多
+                    if (this.hasMore && !this.loading && isNearBottom) {
                         this.loadMessages(this.selectedChannel, true);
                     }
                 },
@@ -768,6 +814,25 @@
                         });
                     } finally {
                         this.isSyncing = false;
+                    }
+                },
+                async refreshMessages() {
+                    if (!this.selectedChannel || this.loading) return;
+                    
+                    // 重置状态
+                    this.messages = [];
+                    this.currentPage = 1;
+                    this.hasMore = true;
+                    
+                    // 重新加载消息
+                    await this.loadMessages(this.selectedChannel);
+                    
+                    if (this.devMode) {
+                        this.addMessageLog({
+                            channel: this.selectedChannel.name,
+                            author: 'System',
+                            content: '手动刷新消息完成'
+                        });
                     }
                 },
             },

@@ -290,4 +290,19 @@ async def get_attachment(attachment_id: int, db: Session = Depends(get_db)):
         headers={
             "Content-Disposition": f'attachment; filename="{attachment.filename}"'
         }
-    ) 
+    )
+
+@router.post("/debug/log")
+async def debug_log(data: dict = Body(...)):
+    """Handle debug logs from frontend"""
+    log_type = data.get('type', 'unknown')
+    log_data = data.get('data', {})
+    
+    if log_type == 'scroll_debug':
+        logger.info(f"Scroll Debug: {log_data}")
+    elif log_type == 'load_more_triggered':
+        logger.info(f"Load More Triggered: {log_data}")
+    else:
+        logger.info(f"Debug Log ({log_type}): {log_data}")
+    
+    return {"status": "ok"} 
