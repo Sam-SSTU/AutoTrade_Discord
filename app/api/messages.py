@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 import logging
 import json
@@ -27,6 +27,9 @@ class MessageCreate(BaseModel):
 class SyncHistoryRequest(BaseModel):
     message_count: int
 
+class ChannelReadRequest(BaseModel):
+    channel_id: str
+
 def get_db():
     db = SessionLocal()
     try:
@@ -36,92 +39,41 @@ def get_db():
 
 @router.get("/messages")
 async def get_messages(
-    channel_id: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=100),
+    channel_id: str,
+    page: int = Query(1, gt=0),
+    per_page: int = Query(20, gt=0),
     db: Session = Depends(get_db)
 ):
-    """获取消息列表，支持分页"""
+    """获取频道消息"""
     try:
-        query = db.query(Message).join(Channel).join(KOL)
+        channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
         
-        if channel_id is not None:
-            # 使用platform_channel_id进行过滤
-            query = query.filter(Channel.platform_channel_id == channel_id)
-            # 检查是否找到频道
-            channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
-            if channel:
-                logger.info(f"找到频道: {channel.name} (ID: {channel.platform_channel_id})")
-            else:
-                logger.error(f"找不到Discord频道ID为 {channel_id} 的频道")
-                return {"total": 0, "page": page, "per_page": per_page, "messages": []}
-            
-        # 检查是否有任何消息
-        total = query.count()
-        logger.info(f"找到 {total} 条消息")
-        
-        # 添加排序和分页
-        messages = query.order_by(desc(Message.created_at))\
-            .offset((page - 1) * per_page)\
-            .limit(per_page)\
-            .all()
-            
-        logger.info(f"当前页面获取到 {len(messages)} 条消息")
-        
-        if len(messages) > 0:
-            # 输出第一条消息的详细信息作为样本
-            sample_msg = messages[0]
-            logger.info(f"样本消息: ID={sample_msg.id}, "
-                       f"platform_message_id={sample_msg.platform_message_id}, "
-                       f"channel_id={sample_msg.channel.platform_channel_id}, "
-                       f"content={sample_msg.content[:100]}")
-            
-        # 转换消息格式，包含附件信息
-        result = []
-        for msg in messages:
-            try:
-                attachments = []
-                for attachment in msg.attachments:
-                    attachments.append({
-                        'id': attachment.id,
-                        'filename': attachment.filename,
-                        'content_type': attachment.content_type,
-                        'url': f'/api/messages/attachments/{attachment.id}'
-                    })
-                    
-                result.append({
-                    'id': msg.id,
-                    'platform_message_id': msg.platform_message_id,
-                    'channel_id': msg.channel.platform_channel_id,  # 使用Discord的channel ID
-                    'content': msg.content,
-                    'embeds': json.loads(msg.embeds) if msg.embeds else [],
-                    'attachments': attachments,
-                    'referenced_message_id': msg.referenced_message_id,
-                    'referenced_content': msg.referenced_content,
-                    'created_at': msg.created_at.isoformat(),
-                    'author': {
-                        'id': msg.kol.id,
-                        'name': msg.kol.name,
-                        'platform_user_id': msg.kol.platform_user_id
-                    }
-                })
-            except Exception as e:
-                logger.error(f"处理消息 {msg.id} 时出错: {str(e)}")
-                logger.error(f"错误详情: {traceback.format_exc()}")
-                continue
-            
-        logger.info(f"成功处理 {len(result)} 条消息")
+        # 按创建时间倒序查询消息
+        messages = db.query(Message).filter(
+            Message.channel_id == channel.id
+        ).order_by(desc(Message.created_at)).offset(
+            (page - 1) * per_page
+        ).limit(per_page).all()
         
         return {
-            'total': total,
-            'page': page,
-            'per_page': per_page,
-            'messages': result
+            "messages": [{
+                "id": message.id,
+                "content": message.content,
+                "author_name": message.kol.name,
+                "created_at": message.created_at.isoformat(),
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "filename": attachment.filename,
+                        "content_type": attachment.content_type
+                    } for attachment in message.attachments
+                ] if message.attachments else []
+            } for message in messages]
         }
-        
     except Exception as e:
-        logger.error(f"获取消息列表时出错: {str(e)}")
-        logger.error(f"错误详情: {traceback.format_exc()}")
+        logger.error(f"Error getting messages: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/messages")
@@ -144,7 +96,7 @@ async def create_message(
             kol = KOL(
                 name=message_create.author_name,
                 platform=Platform.DISCORD.value,
-                platform_user_id=f"manual_{datetime.now().timestamp()}",
+                platform_user_id=f"manual_{datetime.now(timezone.utc).timestamp()}",
                 is_active=True
             )
             db.add(kol)
@@ -152,11 +104,11 @@ async def create_message(
         
         # 创建消息
         message = Message(
-            platform_message_id=f"manual_{datetime.now().timestamp()}",
+            platform_message_id=f"manual_{datetime.now(timezone.utc).timestamp()}",
             content=message_create.content,
             channel_id=channel.id,
             kol_id=kol.id,
-            created_at=datetime.now()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(message)
@@ -308,21 +260,45 @@ async def sync_history_messages(
 
 @router.post("/messages/clear-all")
 async def clear_all_messages(db: Session = Depends(get_db)):
-    """清除数据库中的所有消息"""
+    """清除数据库中的所有消息和相关文件"""
     try:
-        # 获取消息总数
-        message_count = db.query(Message).count()
-        
-        # 删除所有消息
-        db.query(Message).delete()
+        # 首先删除所有未读消息记录
+        db.query(UnreadMessage).delete()
         db.commit()
         
+        # 删除物理文件和附件记录
+        storage_dir = os.path.join(os.getcwd(), 'storage')
+        if os.path.exists(storage_dir):
+            # 删除storage目录下的所有文件和子目录
+            for root, dirs, files in os.walk(storage_dir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                for name in dirs:
+                    os.rmdir(os.path.join(root, name))
+            logger.info("已清除所有物理文件")
+        
+        # 删除数据库中的附件记录
+        attachment_count = db.query(Attachment).count()
+        db.query(Attachment).delete()
+        db.commit()
+        logger.info(f"已删除 {attachment_count} 条附件记录")
+        
+        # 获取并删除所有消息
+        message_count = db.query(Message).count()
+        db.query(Message).delete()
+        db.commit()
+        logger.info(f"已删除 {message_count} 条消息")
+        
         return {
-            "deleted_count": message_count,
-            "status": "success"
+            "status": "success",
+            "deleted_messages": message_count,
+            "deleted_attachments": attachment_count,
+            "files_cleared": True
         }
     except Exception as e:
         db.rollback()
+        logger.error(f"清除数据库失败: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/messages/attachments/{attachment_id}")
@@ -357,62 +333,114 @@ async def debug_log(data: dict = Body(...)):
 
 @router.get("/messages/unread-counts")
 async def get_unread_counts(db: Session = Depends(get_db)):
-    """Get unread message counts for all channels"""
-    unread_messages = db.query(UnreadMessage).all()
-    return {
-        str(unread.channel.platform_channel_id): unread.unread_count 
-        for unread in unread_messages
-    }
+    """获取所有频道的未读消息数"""
+    try:
+        unread_counts = {}
+        channels = db.query(Channel).all()
+        
+        for channel in channels:
+            # 获取该频道的未读消息记录
+            unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+            if unread and unread.unread_count > 0:
+                unread_counts[channel.platform_channel_id] = unread.unread_count
+        
+        return unread_counts
+    except Exception as e:
+        logger.error(f"Error getting unread counts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/messages/mark-channel-read/{channel_id}")
-async def mark_channel_read(channel_id: str, db: Session = Depends(get_db)):
-    """Mark all messages in a channel as read"""
-    channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
+@router.post("/messages/mark-channel-read")
+async def mark_channel_read(request: ChannelReadRequest, db: Session = Depends(get_db)):
+    """标记频道所有消息为已读"""
+    try:
+        channel = db.query(Channel).filter(Channel.platform_channel_id == request.channel_id).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
         
-    # Get the latest message in the channel
-    latest_message = db.query(Message).filter(Message.channel_id == channel.id)\
-        .order_by(desc(Message.created_at)).first()
+        # 获取频道最新消息
+        latest_message = db.query(Message).filter(
+            Message.channel_id == channel.id
+        ).order_by(desc(Message.created_at)).first()
         
-    # Update or create unread message record
-    unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
-    if unread:
-        unread.last_read_message_id = latest_message.id if latest_message else None
-        unread.unread_count = 0
-    else:
-        unread = UnreadMessage(
-            channel_id=channel.id,
-            last_read_message_id=latest_message.id if latest_message else None,
-            unread_count=0
-        )
-        db.add(unread)
-    
-    db.commit()
-    return {"status": "success"}
+        # 更新或创建未读消息记录
+        unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+        if unread:
+            unread.unread_count = 0
+            if latest_message:
+                unread.last_read_message_id = latest_message.id
+        else:
+            unread = UnreadMessage(
+                channel_id=channel.id,
+                unread_count=0,
+                last_read_message_id=latest_message.id if latest_message else None
+            )
+            db.add(unread)
+        
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error marking channel as read: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/messages/mark-all-read")
-async def mark_all_read(db: Session = Depends(get_db)):
-    """Mark all messages in all channels as read"""
-    db.query(UnreadMessage).update({"unread_count": 0})
-    db.commit()
-    return {"status": "success"}
+async def mark_all_channels_read(db: Session = Depends(get_db)):
+    """标记所有频道的消息为已读"""
+    try:
+        channels = db.query(Channel).all()
+        for channel in channels:
+            # 获取该频道的最新消息
+            latest_message = db.query(Message).filter(
+                Message.channel_id == channel.id
+            ).order_by(desc(Message.created_at)).first()
+            
+            # 更新或创建未读消息记录
+            unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
+            if unread:
+                unread.unread_count = 0
+                if latest_message:
+                    unread.last_read_message_id = latest_message.id
+            else:
+                unread = UnreadMessage(
+                    channel_id=channel.id,
+                    unread_count=0,
+                    last_read_message_id=latest_message.id if latest_message else None
+                )
+                db.add(unread)
+        
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error marking all channels as read: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Update the existing create_message function to increment unread count
 async def increment_unread_count(channel_id: int, db: Session):
-    """Helper function to increment unread count for a channel"""
-    unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel_id).first()
-    if unread:
-        unread.unread_count += 1
-    else:
-        unread = UnreadMessage(channel_id=channel_id, unread_count=1)
-        db.add(unread)
-    db.commit()
+    """增加频道的未读消息计数"""
+    try:
+        unread = db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel_id).first()
+        if not unread:
+            # 如果没有未读记录，创建新记录
+            unread = UnreadMessage(
+                channel_id=channel_id,
+                unread_count=1,
+                last_read_message_id=None  # 初始化时不设置last_read_message_id
+            )
+            db.add(unread)
+        else:
+            # 增加未读计数
+            unread.unread_count += 1
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error incrementing unread count: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ping")
 async def ping():
     """Check backend connectivity"""
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @router.get("/unread-counts")
 async def get_unread_counts(db: Session = Depends(get_db)):
