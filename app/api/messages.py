@@ -63,6 +63,8 @@ async def get_messages(
                 "content": message.content,
                 "author_name": message.kol.name,
                 "created_at": message.created_at.isoformat(),
+                "referenced_message_id": message.referenced_message_id,
+                "referenced_content": message.referenced_content,
                 "attachments": [
                     {
                         "id": attachment.id,
@@ -326,17 +328,29 @@ async def clear_all_messages(db: Session = Depends(get_db)):
 @router.get("/messages/attachments/{attachment_id}")
 async def get_attachment(attachment_id: int, db: Session = Depends(get_db)):
     """获取附件内容"""
-    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
-    if not attachment:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        logger.info(f"Fetching attachment with ID: {attachment_id}")
+        attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
         
-    return Response(
-        content=attachment.file_data,
-        media_type=attachment.content_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{attachment.filename}"'
-        }
-    )
+        if not attachment:
+            logger.error(f"Attachment not found: {attachment_id}")
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        if not attachment.file_data:
+            logger.error(f"Attachment {attachment_id} has no file data")
+            raise HTTPException(status_code=404, detail="Attachment file data not found")
+            
+        logger.info(f"Successfully retrieved attachment: {attachment.filename} ({attachment.content_type})")
+        return Response(
+            content=attachment.file_data,
+            media_type=attachment.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{attachment.filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving attachment {attachment_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/debug/log")
 async def debug_log(data: dict = Body(...)):

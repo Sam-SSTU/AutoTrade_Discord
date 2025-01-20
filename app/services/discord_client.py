@@ -13,6 +13,7 @@ from ..database import SessionLocal
 from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.message_utils import extract_message_content
 from .file_utils import FileHandler
+from ..ai import ai_message_handler
 
 # 创建Message Logs记录器
 message_logger = logging.getLogger("Message Logs")
@@ -414,6 +415,11 @@ class DiscordClient:
                 'content': message.content,
                 'created_at': message.created_at.isoformat()
             })
+
+            # Forward message to AI module if enabled
+            if channel.is_forwarding:
+                db.refresh(message)  # Refresh to get the attachments relationship
+                await ai_message_handler.broadcast_message(message)
             
             message_logger.info(f"消息存储成功: {platform_message_id}")
             

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import logging
+from pydantic import BaseModel
 
 from ..database import SessionLocal, get_db
 from ..models.base import Channel, KOL, KOLCategory, Message, UnreadMessage, Attachment
@@ -28,40 +29,29 @@ def get_db():
     finally:
         db.close()
 
+class ChannelForwardingUpdate(BaseModel):
+    is_forwarding: bool
+
+class ChannelActiveUpdate(BaseModel):
+    is_active: bool
+
 @router.get("/channels")
 async def get_channels(
     guild_id: Optional[str] = None,
-    is_active: Optional[bool] = True,
     kol_category: Optional[str] = None,
-    include_inactive: Optional[bool] = False,
     db: Session = Depends(get_db)
 ):
-    """获取频道列表，支持按服务器ID、激活状态和KOL分类筛选"""
+    """获取频道列表，支持按服务器ID和KOL分类筛选"""
     try:
         query = db.query(Channel)
-        
-        # 打印初始查询条件
-        print(f"Query params: guild_id={guild_id}, is_active={is_active}, include_inactive={include_inactive}")
         
         if guild_id:
             query = query.filter(Channel.guild_id == guild_id)
         
-        # 修改活跃状态过滤逻辑
-        if not include_inactive:
-            query = query.filter(Channel.is_active == True)
-        
         if kol_category:
             query = query.filter(Channel.kol_category == kol_category)
             
-        # 打印SQL查询语句
-        print(f"SQL Query: {query}")
-        
         channels = query.order_by(desc(Channel.created_at)).all()
-        
-        # 打印查询结果
-        print(f"Found {len(channels)} channels")
-        for channel in channels:
-            print(f"Channel: {channel.name} (ID: {channel.platform_channel_id}, Active: {channel.is_active})")
         
         result = []
         for channel in channels:
@@ -71,7 +61,7 @@ async def get_channels(
                 "name": channel.name,
                 "guild_id": channel.guild_id,
                 "guild_name": channel.guild_name,
-                "is_active": channel.is_active,
+                "is_forwarding": channel.is_forwarding,
                 "type": channel.type,
                 "parent_id": channel.parent_id,
                 "position": channel.position,
@@ -80,21 +70,11 @@ async def get_channels(
                 "updated_at": channel.updated_at.isoformat() if channel.updated_at else None
             }
             result.append(channel_data)
-            
-            # 调试日志
-            if channel.type == 4:  # 如果是分类
-                print(f"Found category: {channel.name} (ID: {channel.platform_channel_id})")
-            elif channel.parent_id:  # 如果属于某个分类
-                print(f"Channel {channel.name} belongs to category: {channel.parent_id}")
-            else:
-                print(f"Uncategorized channel: {channel.name}")
         
-        # 打印返回结果
-        print(f"Returning {len(result)} channels")
         return result
         
     except Exception as e:
-        print(f"Error in get_channels: {str(e)}")
+        logger.error(f"Error in get_channels: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/channels/sync")
@@ -173,4 +153,36 @@ async def reset_channels(
         raise HTTPException(
             status_code=500,
             detail=str(e)
-        ) 
+        )
+
+@router.post("/channels/{channel_id}/forwarding")
+async def update_channel_forwarding(
+    channel_id: str,
+    update: ChannelForwardingUpdate,
+    db: Session = Depends(get_db)
+):
+    """更新频道的转发状态"""
+    channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    
+    channel.is_forwarding = update.is_forwarding
+    db.commit()
+    
+    return {"status": "success", "is_forwarding": channel.is_forwarding}
+
+@router.post("/channels/{channel_id}/active")
+async def update_channel_active(
+    channel_id: str,
+    update: ChannelActiveUpdate,
+    db: Session = Depends(get_db)
+):
+    """更新频道的监听状态"""
+    channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    
+    channel.is_active = update.is_active
+    db.commit()
+    
+    return {"status": "success", "is_active": channel.is_active} 

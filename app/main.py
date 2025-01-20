@@ -16,6 +16,8 @@ from .database import engine
 from .services.message_handler import MessageHandler
 from .services.discord_client import DiscordClient
 from .api import messages, channels
+from . import routes
+from .ai import ai_message_handler
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -62,11 +64,12 @@ app.add_middleware(
 )
 
 # Register API routes
-app.include_router(messages.router, prefix="/api", tags=["messages"])
-app.include_router(channels.router, prefix="/api", tags=["channels"])
+app.include_router(routes.router)  # 页面路由
+app.include_router(channels.router, prefix="/api")  # API路由
+app.include_router(messages.router, prefix="/api")  # API路由
 
 # Mount static files
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # 配置静态文件服务
 storage_path = os.path.join(os.getcwd(), 'storage')
@@ -99,6 +102,16 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
         discord_client.unregister_websocket(websocket)
+
+@app.websocket("/ws/ai")
+async def websocket_ai_endpoint(websocket: WebSocket):
+    client_id = id(websocket)
+    await ai_message_handler.connect(websocket, client_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except Exception:
+        ai_message_handler.disconnect(client_id)
 
 @app.get("/api/ping")
 async def ping():
