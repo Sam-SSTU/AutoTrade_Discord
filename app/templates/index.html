@@ -989,9 +989,17 @@
                     }
                 },
                 async clearDatabase() {
-                    if (!confirm('Are you sure you want to delete ALL messages from the database? This action cannot be undone!')) {
+                    if (!confirm('确定要删除所有消息吗？此操作无法撤销！')) {
                         return;
                     }
+
+                    // 显示加载中对话框
+                    const loadingInstance = this.$loading({
+                        lock: true,
+                        text: '正在清除消息...',
+                        spinner: 'el-icon-loading',
+                        background: 'rgba(0, 0, 0, 0.7)'
+                    });
 
                     try {
                         const response = await fetch('/api/messages/clear-all', {
@@ -1000,24 +1008,57 @@
 
                         if (response.ok) {
                             const result = await response.json();
+                            
+                            // 清空当前显示的消息
+                            this.messages = [];
+                            this.currentPage = 1;
+                            this.hasMore = false;
+                            
+                            // 重置未读消息计数
+                            this.unreadCounts = {};
+                            
+                            // 清空所有消息日志
+                            this.messageLogs = [];
+                            
+                            // 重置所有频道的最后消息时间
+                            this.lastMessageTimes = {};
+                            
+                            this.$notify({
+                                title: '成功',
+                                message: `已清除 ${result.deleted_messages} 条消息和 ${result.deleted_attachments} 个附件`,
+                                type: 'success',
+                                duration: 3000
+                            });
+                            
                             this.addMessageLog({
                                 channel: 'Developer',
                                 author: 'System',
-                                content: `Successfully deleted ${result.deleted_count} messages`
+                                content: `成功删除 ${result.deleted_messages} 条消息和 ${result.deleted_attachments} 个附件`
                             });
-                            // 刷新当前频道的消息
+                            
+                            // 如果当前有选中的频道，重新加载该频道
                             if (this.selectedChannel) {
                                 await this.loadMessages(this.selectedChannel);
                             }
                         } else {
-                            throw new Error('Failed to clear database');
+                            throw new Error('清除数据库失败');
                         }
                     } catch (error) {
+                        console.error('Error clearing database:', error);
+                        this.$notify.error({
+                            title: '错误',
+                            message: '清除消息失败: ' + error.message,
+                            duration: 3000
+                        });
+                        
                         this.addMessageLog({
                             channel: 'Developer',
                             author: 'System',
-                            content: `Error clearing database: ${error.message}`
+                            content: '清除消息失败: ' + error.message
                         });
+                    } finally {
+                        // 关闭加载中对话框
+                        loadingInstance.close();
                     }
                 },
                 toggleDevMode() {

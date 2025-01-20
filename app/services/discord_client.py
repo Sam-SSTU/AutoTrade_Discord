@@ -339,6 +339,16 @@ class DiscordClient:
     async def store_message(self, message_data: dict, db: Session) -> None:
         """Store a Discord message in the database"""
         try:
+            # Check if message already exists
+            platform_message_id = str(message_data.get('id'))
+            existing_message = db.query(Message).filter(
+                Message.platform_message_id == platform_message_id
+            ).first()
+            
+            if existing_message:
+                message_logger.info(f"消息已存在，跳过: {platform_message_id}")
+                return
+            
             # Get channel
             channel = db.query(Channel).filter(
                 Channel.platform_channel_id == str(message_data.get('channel_id'))
@@ -366,7 +376,7 @@ class DiscordClient:
             
             # Create message
             message = Message(
-                platform_message_id=str(message_data.get('id')),
+                platform_message_id=platform_message_id,
                 channel_id=channel.id,
                 kol_id=kol.id,
                 content=message_data.get('content'),
@@ -404,6 +414,8 @@ class DiscordClient:
                 'content': message.content,
                 'created_at': message.created_at.isoformat()
             })
+            
+            message_logger.info(f"消息存储成功: {platform_message_id}")
             
         except Exception as e:
             message_logger.error(f"Error storing message: {str(e)}")

@@ -262,40 +262,62 @@ async def sync_history_messages(
 async def clear_all_messages(db: Session = Depends(get_db)):
     """清除数据库中的所有消息和相关文件"""
     try:
-        # 首先删除所有未读消息记录
-        db.query(UnreadMessage).delete()
-        db.commit()
+        # Start a transaction
+        transaction = db.begin_nested()
         
-        # 删除物理文件和附件记录
-        storage_dir = os.path.join(os.getcwd(), 'storage')
-        if os.path.exists(storage_dir):
-            # 删除storage目录下的所有文件和子目录
-            for root, dirs, files in os.walk(storage_dir, topdown=False):
-                for name in files:
-                    os.remove(os.path.join(root, name))
-                for name in dirs:
-                    os.rmdir(os.path.join(root, name))
-            logger.info("已清除所有物理文件")
-        
-        # 删除数据库中的附件记录
-        attachment_count = db.query(Attachment).count()
-        db.query(Attachment).delete()
-        db.commit()
-        logger.info(f"已删除 {attachment_count} 条附件记录")
-        
-        # 获取并删除所有消息
-        message_count = db.query(Message).count()
-        db.query(Message).delete()
-        db.commit()
-        logger.info(f"已删除 {message_count} 条消息")
-        
-        return {
-            "status": "success",
-            "deleted_messages": message_count,
-            "deleted_attachments": attachment_count,
-            "files_cleared": True
-        }
+        try:
+            # Get counts before deletion for accurate reporting
+            message_count = db.query(Message).count()
+            attachment_count = db.query(Attachment).count()
+            
+            # Delete all unread messages first
+            db.query(UnreadMessage).delete(synchronize_session='fetch')
+            
+            # Delete all attachments
+            db.query(Attachment).delete(synchronize_session='fetch')
+            
+            # Delete all messages
+            db.query(Message).delete(synchronize_session='fetch')
+            
+            # Commit the transaction
+            transaction.commit()
+            db.commit()  # Commit the outer transaction as well
+            
+            # Delete physical files after DB transaction succeeds
+            storage_dir = os.path.join(os.getcwd(), 'storage')
+            if os.path.exists(storage_dir):
+                for root, dirs, files in os.walk(storage_dir, topdown=False):
+                    for name in files:
+                        try:
+                            file_path = os.path.join(root, name)
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                        except OSError as e:
+                            logger.warning(f"Failed to delete file {name}: {str(e)}")
+                    for name in dirs:
+                        try:
+                            dir_path = os.path.join(root, name)
+                            if os.path.exists(dir_path):
+                                os.rmdir(dir_path)
+                        except OSError as e:
+                            logger.warning(f"Failed to delete directory {name}: {str(e)}")
+                logger.info("已清除所有物理文件")
+            
+            return {
+                "status": "success",
+                "deleted_messages": message_count,
+                "deleted_attachments": attachment_count,
+                "files_cleared": True
+            }
+            
+        except Exception as inner_e:
+            # Rollback the nested transaction
+            transaction.rollback()
+            db.rollback()  # Rollback the outer transaction as well
+            raise inner_e
+            
     except Exception as e:
+        # Rollback the main transaction if needed
         db.rollback()
         logger.error(f"清除数据库失败: {str(e)}")
         logger.error(traceback.format_exc())
