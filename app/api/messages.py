@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from ..database import SessionLocal, get_db
 from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.discord_client import DiscordClient
 from ..services.file_utils import FileHandler
+from ..ai.message_handler import ai_message_handler
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -129,6 +130,15 @@ async def create_message(
             'content': message.content,
             'created_at': message.created_at.isoformat()
         })
+
+        # 如果频道启用了转发，则转发到AI模块
+        if channel.is_forwarding:
+            # 重新查询以获取完整的关联数据
+            message = db.query(Message).options(
+                joinedload(Message.channel),
+                joinedload(Message.attachments)
+            ).filter(Message.id == message.id).first()
+            await ai_message_handler.broadcast_message(message)
         
         return {
             "id": message.id,
