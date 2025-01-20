@@ -2,12 +2,12 @@
 
 Revision ID: initial_migration
 Revises: 
-Create Date: 2024-01-19 18:00:00.000000
+Create Date: 2024-01-20 10:00:00.000000
 
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
 
 # revision identifiers, used by Alembic.
 revision = 'initial_migration'
@@ -15,58 +15,71 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+
 def upgrade():
-    # Create kols table
-    op.create_table('kols',
+    # Platform enum
+    op.execute("CREATE TYPE platform AS ENUM ('DISCORD')")
+    
+    # Create KOL table
+    op.create_table(
+        'kol',
         sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('platform', sa.String(), nullable=False),
+        sa.Column('name', sa.String(), nullable=False),
+        sa.Column('platform', sa.Enum('DISCORD', name='platform'), nullable=False),
         sa.Column('platform_user_id', sa.String(), nullable=False),
-        sa.Column('name', sa.String(), nullable=False),
-        sa.Column('category', sa.String(), nullable=True),
-        sa.Column('is_active', sa.Boolean(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=False, default=True),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('platform_user_id')
+        sa.UniqueConstraint('platform', 'platform_user_id')
     )
-
-    # Create channels table
-    op.create_table('channels',
+    
+    # Create Channel table
+    op.create_table(
+        'channel',
         sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('platform_channel_id', sa.String(), nullable=False),
+        sa.Column('platform_channel_id', sa.String(), nullable=False, unique=True),
         sa.Column('name', sa.String(), nullable=False),
-        sa.Column('guild_id', sa.String(), nullable=False),
-        sa.Column('guild_name', sa.String(), nullable=False),
-        sa.Column('category_id', sa.String(), nullable=True),
-        sa.Column('category_name', sa.String(), nullable=True),
-        sa.Column('is_active', sa.Boolean(), nullable=False),
-        sa.Column('kol_category', sa.String(), nullable=True),
-        sa.Column('kol_name', sa.String(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
-        sa.Column('updated_at', sa.DateTime(), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('platform_channel_id')
+        sa.Column('guild_id', sa.String(), nullable=True),
+        sa.Column('guild_name', sa.String(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=False, default=True),
+        sa.PrimaryKeyConstraint('id')
     )
-
-    # Create messages table
-    op.create_table('messages',
+    
+    # Create Message table
+    op.create_table(
+        'message',
         sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('platform_message_id', sa.String(), nullable=False),
+        sa.Column('platform_message_id', sa.String(), nullable=False, unique=True),
         sa.Column('channel_id', sa.Integer(), nullable=False),
-        sa.Column('kol_id', sa.Integer(), nullable=True),
-        sa.Column('content', sa.String(), nullable=True),
-        sa.Column('attachments', postgresql.JSON(astext_type=sa.Text()), nullable=True),
-        sa.Column('embeds', postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column('kol_id', sa.Integer(), nullable=False),
+        sa.Column('content', sa.Text(), nullable=True),
+        sa.Column('attachments', sa.JSON(), nullable=True),
+        sa.Column('embeds', sa.JSON(), nullable=True),
         sa.Column('referenced_message_id', sa.String(), nullable=True),
-        sa.Column('referenced_content', sa.String(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(['channel_id'], ['channels.id'], ),
-        sa.ForeignKeyConstraint(['kol_id'], ['kols.id'], ),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('platform_message_id')
+        sa.Column('referenced_content', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(['channel_id'], ['channel.id'], ),
+        sa.ForeignKeyConstraint(['kol_id'], ['kol.id'], ),
+        sa.PrimaryKeyConstraint('id')
     )
+    
+    # Create indexes
+    op.create_index(op.f('ix_message_created_at'), 'message', ['created_at'], unique=False)
+    op.create_index(op.f('ix_message_platform_message_id'), 'message', ['platform_message_id'], unique=True)
+    op.create_index(op.f('ix_channel_platform_channel_id'), 'channel', ['platform_channel_id'], unique=True)
+    op.create_index(op.f('ix_kol_platform_user_id'), 'kol', ['platform_user_id'], unique=False)
+
 
 def downgrade():
-    op.drop_table('messages')
-    op.drop_table('channels')
-    op.drop_table('kols') 
+    # Drop indexes
+    op.drop_index(op.f('ix_kol_platform_user_id'), table_name='kol')
+    op.drop_index(op.f('ix_channel_platform_channel_id'), table_name='channel')
+    op.drop_index(op.f('ix_message_platform_message_id'), table_name='message')
+    op.drop_index(op.f('ix_message_created_at'), table_name='message')
+    
+    # Drop tables
+    op.drop_table('message')
+    op.drop_table('channel')
+    op.drop_table('kol')
+    
+    # Drop enum
+    op.execute('DROP TYPE platform') 

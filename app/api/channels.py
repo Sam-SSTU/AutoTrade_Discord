@@ -1,14 +1,25 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+import logging
 
 from ..database import SessionLocal, get_db
-from ..models.base import Channel, KOL, KOLCategory
+from ..models.base import Channel, KOL, KOLCategory, Message, UnreadMessage, Attachment
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
-discord_client = DiscordClient()
+message_logger = logging.getLogger("Message Logs")
+logger = logging.getLogger(__name__)
+
+# Create a single instance of DiscordClient
+_discord_client = None
+
+def get_discord_client():
+    global _discord_client
+    if _discord_client is None:
+        _discord_client = DiscordClient()
+    return _discord_client
 
 def get_db():
     db = SessionLocal()
@@ -20,45 +31,77 @@ def get_db():
 @router.get("/channels")
 async def get_channels(
     guild_id: Optional[str] = None,
-    is_active: Optional[bool] = None,
+    is_active: Optional[bool] = True,
     kol_category: Optional[str] = None,
+    include_inactive: Optional[bool] = False,
     db: Session = Depends(get_db)
 ):
     """获取频道列表，支持按服务器ID、激活状态和KOL分类筛选"""
-    query = db.query(Channel)
-    
-    if guild_id:
-        query = query.filter(Channel.guild_id == guild_id)
-    if is_active is not None:
-        query = query.filter(Channel.is_active == is_active)
-    if kol_category:
-        query = query.filter(Channel.kol_category == kol_category)
+    try:
+        query = db.query(Channel)
         
-    channels = query.order_by(desc(Channel.created_at)).all()
-    
-    return [
-        {
-            "id": channel.id,
-            "platform_channel_id": channel.platform_channel_id,
-            "name": channel.name,
-            "guild_id": channel.guild_id,
-            "guild_name": channel.guild_name,
-            "category_id": channel.category_id,
-            "category_name": channel.category_name,
-            "is_active": channel.is_active,
-            "kol_category": channel.kol_category.value if channel.kol_category else None,
-            "kol_name": channel.kol_name,
-            "created_at": channel.created_at.isoformat() if channel.created_at else None,
-            "updated_at": channel.updated_at.isoformat() if channel.updated_at else None
-        }
-        for channel in channels
-    ]
+        # 打印初始查询条件
+        print(f"Query params: guild_id={guild_id}, is_active={is_active}, include_inactive={include_inactive}")
+        
+        if guild_id:
+            query = query.filter(Channel.guild_id == guild_id)
+        
+        # 修改活跃状态过滤逻辑
+        if not include_inactive:
+            query = query.filter(Channel.is_active == True)
+        
+        if kol_category:
+            query = query.filter(Channel.kol_category == kol_category)
+            
+        # 打印SQL查询语句
+        print(f"SQL Query: {query}")
+        
+        channels = query.order_by(desc(Channel.created_at)).all()
+        
+        # 打印查询结果
+        print(f"Found {len(channels)} channels")
+        for channel in channels:
+            print(f"Channel: {channel.name} (ID: {channel.platform_channel_id}, Active: {channel.is_active})")
+        
+        result = []
+        for channel in channels:
+            channel_data = {
+                "id": channel.id,
+                "platform_channel_id": channel.platform_channel_id,
+                "name": channel.name,
+                "guild_id": channel.guild_id,
+                "guild_name": channel.guild_name,
+                "is_active": channel.is_active,
+                "type": channel.type,
+                "parent_id": channel.parent_id,
+                "position": channel.position,
+                "category_name": channel.category_name,
+                "created_at": channel.created_at.isoformat() if channel.created_at else None,
+                "updated_at": channel.updated_at.isoformat() if channel.updated_at else None
+            }
+            result.append(channel_data)
+            
+            # 调试日志
+            if channel.type == 4:  # 如果是分类
+                print(f"Found category: {channel.name} (ID: {channel.platform_channel_id})")
+            elif channel.parent_id:  # 如果属于某个分类
+                print(f"Channel {channel.name} belongs to category: {channel.parent_id}")
+            else:
+                print(f"Uncategorized channel: {channel.name}")
+        
+        # 打印返回结果
+        print(f"Returning {len(result)} channels")
+        return result
+        
+    except Exception as e:
+        print(f"Error in get_channels: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/channels/sync")
 async def sync_channels(db: Session = Depends(get_db)):
     """同步Discord中的频道列表到数据库"""
-    await discord_client.sync_channels_to_db(db)
-    return {"message": "Channels synced successfully"}
+    result = await get_discord_client().sync_channels_to_db(db)
+    return result
 
 @router.post("/channels/{channel_id}/activate")
 async def activate_channel(channel_id: int, db: Session = Depends(get_db)):
@@ -97,4 +140,37 @@ async def update_channel_category(
         db.commit()
         return {"message": "Channel category updated successfully"}
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid category") 
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+@router.post("/reset")
+async def reset_channels(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """重置所有频道"""
+    try:
+        # First delete all unread_messages records
+        db.query(UnreadMessage).delete()
+        db.commit()
+        
+        # Then delete all attachments
+        db.query(Attachment).delete()
+        db.commit()
+        
+        # Now delete all messages
+        db.query(Message).delete()
+        db.commit()
+        
+        # Finally delete all channels
+        db.query(Channel).delete()
+        db.commit()
+        
+        return {"message": "频道重置成功"}
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"重置频道失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) 
