@@ -394,11 +394,12 @@
                                      :key="channel.id" 
                                      class="channel-item"
                                      :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
+                                     v-if="channel.is_active || devMode"
                                      @click="selectChannel(channel)">
                                     <div class="channel-content">
                                         <el-switch
                                             v-model="channel.is_forwarding"
-                                            @click.stop="toggleForwarding(channel)"
+                                            @change="(val) => toggleForwarding(channel, val)"
                                             active-color="#67C23A"
                                             inactive-color="#F56C6C"
                                             class="channel-switch">
@@ -1436,8 +1437,7 @@
                         });
                     }
                 },
-                toggleForwarding(channel) {
-                    const newValue = !channel.is_forwarding;
+                toggleForwarding(channel, newValue) {
                     fetch(`/api/channels/${channel.platform_channel_id}/forwarding`, {
                         method: 'POST',
                         headers: {
@@ -1452,7 +1452,6 @@
                         return response.json();
                     })
                     .then(() => {
-                        channel.is_forwarding = newValue;
                         this.$notify({
                             title: '成功',
                             message: `已${newValue ? '开启' : '关闭'}转发`,
@@ -1462,7 +1461,7 @@
                     })
                     .catch(error => {
                         console.error('Error toggling channel forwarding:', error);
-                        channel.is_forwarding = !newValue;
+                        channel.is_forwarding = !newValue;  // 恢复原来的状态
                         this.$notify.error({
                             title: '错误',
                             message: '更新转发状态失败',
