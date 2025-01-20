@@ -349,6 +349,10 @@
                 </div>
             </div>
             <div class="header-right">
+                <button class="btn btn-outline-primary me-3" @click="toggleDevMode">
+                    <i class="el-icon-setting"></i>
+                    <span v-text="devMode ? '退出开发者模式' : '开发者模式'"></span>
+                </button>
                 <a href="/ai" class="btn btn-primary me-3">
                     <i class="el-icon-message"></i>
                     AI消息
@@ -366,10 +370,6 @@
                 </div>
             </div>
         </div>
-
-        <button class="btn btn-outline-primary mb-3" @click="toggleDevMode">
-            <span v-text="devMode ? '退出开发者模式' : '开发者模式'"></span>
-        </button>
 
         <div class="main-content">
             <div class="channels-container">
@@ -394,7 +394,7 @@
                                      :key="channel.id" 
                                      class="channel-item"
                                      :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
-                                     v-if="channel.is_active || devMode"
+                                     v-if="channel.is_forwarding || devMode"
                                      @click="selectChannel(channel)">
                                     <div class="channel-content">
                                         <el-switch
@@ -630,7 +630,7 @@
                 // 开发者工具相关
                 historyMessageCount: 100,
                 isSyncing: false,
-                devMode: false,
+                devMode: true,
                 selectedTimezone: localStorage.getItem('selectedTimezone') || 'UTC',
                 utcTime: '',
                 localTime: '',
@@ -671,26 +671,21 @@
                                 position: channel.position || 0,
                                 channels: []
                             };
-                            console.log('Found category:', channel.name);
                         }
                     });
                     
                     // 将频道分配到对应的分类中
                     this.channels.forEach(channel => {
-                        // 跳过分类本身和无权限的频道
-                        if (channel.type === 4 || (!channel.is_active && !this.devMode)) {
+                        // 跳过分类本身
+                        if (channel.type === 4) {
                             return;
                         }
-                        
-                        console.log('Processing channel:', channel.name, 'parent_id:', channel.parent_id);
                         
                         // 如果有父分类且该分类存在，添加到分类中
                         if (channel.parent_id && groups[channel.parent_id]) {
                             groups[channel.parent_id].channels.push(channel);
-                            console.log('Added to category:', groups[channel.parent_id].name);
                         } else {
                             uncategorized.push(channel);
-                            console.log('Added to uncategorized');
                         }
                     });
                     
@@ -703,8 +698,6 @@
                     const result = Object.values(groups)
                         .filter(group => group.channels.length > 0)  // 只显示有频道的分类
                         .sort((a, b) => (a.position || 0) - (b.position || 0));
-                    
-                    console.log('Categories:', result.map(g => g.name));
                     
                     // 如果有未分类的频道，添加到最后
                     if (uncategorized.length > 0) {
@@ -853,15 +846,17 @@
                             await this.$nextTick();  // 等待 DOM 更新
                             this.$set(this, 'channels', data);  // 设置新数据
                             
-                            const activeCount = data.filter(c => c.is_active).length;
-                            const inactiveCount = data.length - activeCount;
+                            // 只统计非分类类型的频道
+                            const nonCategoryChannels = data.filter(c => c.type !== 4);
+                            const forwardingCount = nonCategoryChannels.filter(c => c.is_forwarding).length;
+                            const nonForwardingCount = nonCategoryChannels.length - forwardingCount;
                             
-                            console.log(`Loaded ${data.length} channels (${activeCount} active, ${inactiveCount} inactive)`);
+                            console.log(`Loaded ${nonCategoryChannels.length} channels (${forwardingCount} forwarding, ${nonForwardingCount} non-forwarding)`);
                             
                             this.addMessageLog({
                                 channel: 'System',
                                 author: 'System',
-                                content: `已加载 ${data.length} 个频道 (${activeCount} 个活跃, ${inactiveCount} 个未激活)`
+                                content: `已加载 ${nonCategoryChannels.length} 个频道 (${forwardingCount} 个转发中, ${nonForwardingCount} 个未转发)`
                             });
                             
                             // 初始化每个频道的最后消息时间
@@ -1136,7 +1131,7 @@
                                 
                                 // 如果当前选中的频道变为无权限，清空选中状态
                                 if (this.selectedChannel && !channels.find(c => 
-                                    c.id === this.selectedChannel.id && c.is_active
+                                    c.id === this.selectedChannel.id && c.is_forwarding
                                 )) {
                                     this.selectedChannel = null;
                                     this.messages = [];
