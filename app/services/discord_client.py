@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..config.author_categories import is_monitored_channel, get_author_category
 from ..database import SessionLocal
-from ..models.base import KOL, Message, Platform, Channel
+from ..models.base import KOL, Message, Platform, Channel, Attachment
 from ..services.message_utils import extract_message_content
+from .file_utils import FileHandler
 
 # 创建Message Logs记录器
 message_logger = logging.getLogger("Message Logs")
@@ -28,6 +29,7 @@ class DiscordClient:
         self._heartbeat_interval = None
         self._last_sequence = None
         self._running = False
+        self.file_handler = FileHandler()
         
         message_logger.info("Discord客户端已初始化")
         
@@ -350,11 +352,10 @@ class DiscordClient:
             
             # 创建消息记录
             message = Message(
-                platform_message_id=str(message_id),  # 确保转换为字符串
+                platform_message_id=str(message_id),
                 channel_id=channel.id,
                 kol_id=kol.id,
                 content=content,
-                attachments=json.dumps(message_data.get('attachments', [])),
                 embeds=json.dumps(message_data.get('embeds', [])),
                 referenced_message_id=str(message_data.get('referenced_message', {}).get('id')) if message_data.get('referenced_message', {}).get('id') else None,
                 referenced_content=message_data.get('referenced_message', {}).get('content'),
@@ -362,8 +363,35 @@ class DiscordClient:
             )
             
             db.add(message)
-            db.commit()
+            db.flush()  # 获取message.id
             
+            # 处理附件
+            attachments = message_data.get('attachments', [])
+            for attachment in attachments:
+                try:
+                    # 下载附件
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(attachment['url']) as response:
+                            if response.status == 200:
+                                file_data = await response.read()
+                                content_type = response.headers.get('Content-Type', 'application/octet-stream')
+                                
+                                # 创建附件记录
+                                db_attachment = Attachment(
+                                    message_id=message.id,
+                                    filename=attachment.get('filename', 'unknown'),
+                                    content_type=content_type,
+                                    file_data=file_data
+                                )
+                                db.add(db_attachment)
+                                message_logger.info(f"附件已保存到数据库: {attachment.get('filename')}")
+                            else:
+                                message_logger.error(f"下载附件失败: {attachment['url']}")
+                except Exception as e:
+                    message_logger.error(f"处理附件时出错: {str(e)}")
+                    continue
+            
+            db.commit()
             message_logger.info(f"{username}发了消息: {content or '[空消息]'}")
             
         except Exception as e:

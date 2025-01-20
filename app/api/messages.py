@@ -1,5 +1,5 @@
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Depends, Body
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from datetime import datetime
@@ -7,9 +7,10 @@ from pydantic import BaseModel
 import logging
 import json
 import asyncio
+import traceback
 
 from ..database import SessionLocal, get_db
-from ..models.base import Message, KOL, Platform, Channel
+from ..models.base import Message, KOL, Platform, Channel, Attachment
 from ..services.discord_client import DiscordClient
 
 router = APIRouter()
@@ -33,85 +34,93 @@ def get_db():
 
 @router.get("/messages")
 async def get_messages(
-    db: Session = Depends(get_db),
     channel_id: Optional[str] = None,
-    author_name: Optional[str] = None,
-    page: int = Query(1, gt=0),
-    limit: int = Query(20, gt=0)
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db)
 ):
-    """获取消息列表，支持分页和过滤"""
-    logger.info(f"Getting messages for channel_id: {channel_id}")
-    
-    query = db.query(Message).join(KOL).join(Channel)
-    
-    # 应用过滤条件
-    if channel_id:
-        logger.info(f"Filtering by channel_id: {channel_id}")
-        query = query.filter(Channel.platform_channel_id == channel_id)
-    if author_name:
-        logger.info(f"Filtering by author_name: {author_name}")
-        query = query.filter(KOL.name.ilike(f"%{author_name}%"))
-    
-    # 计算总数
-    total_count = query.count()
-    
-    # 计算分页
-    offset = (page - 1) * limit
-    logger.info(f"Pagination: page={page}, limit={limit}, offset={offset}")
-    
-    # 获取消息并按时间倒序排列
-    messages = query.order_by(desc(Message.created_at)).offset(offset).limit(limit).all()
-    logger.info(f"Found {len(messages)} messages")
-    
-    # 格式化响应
-    formatted_messages = []
-    for message in messages:
-        try:
-            # 添加调试日志
-            logger.debug(f"Processing message {message.id}, raw content: {message.content!r}")
+    """获取消息列表，支持分页"""
+    try:
+        query = db.query(Message).join(Channel).join(KOL)
+        
+        if channel_id is not None:
+            # 使用platform_channel_id进行过滤
+            query = query.filter(Channel.platform_channel_id == channel_id)
+            # 检查是否找到频道
+            channel = db.query(Channel).filter(Channel.platform_channel_id == channel_id).first()
+            if channel:
+                logger.info(f"找到频道: {channel.name} (ID: {channel.platform_channel_id})")
+            else:
+                logger.error(f"找不到Discord频道ID为 {channel_id} 的频道")
+                return {"total": 0, "page": page, "per_page": per_page, "messages": []}
             
-            # 处理附件和嵌入内容
+        # 检查是否有任何消息
+        total = query.count()
+        logger.info(f"找到 {total} 条消息")
+        
+        # 添加排序和分页
+        messages = query.order_by(desc(Message.created_at))\
+            .offset((page - 1) * per_page)\
+            .limit(per_page)\
+            .all()
+            
+        logger.info(f"当前页面获取到 {len(messages)} 条消息")
+        
+        if len(messages) > 0:
+            # 输出第一条消息的详细信息作为样本
+            sample_msg = messages[0]
+            logger.info(f"样本消息: ID={sample_msg.id}, "
+                       f"platform_message_id={sample_msg.platform_message_id}, "
+                       f"channel_id={sample_msg.channel.platform_channel_id}, "
+                       f"content={sample_msg.content[:100]}")
+            
+        # 转换消息格式，包含附件信息
+        result = []
+        for msg in messages:
             try:
-                attachments = message.attachments if isinstance(message.attachments, list) else json.loads(message.attachments or '[]')
-                embeds = message.embeds if isinstance(message.embeds, list) else json.loads(message.embeds or '[]')
-            except json.JSONDecodeError:
-                logger.error(f"Error decoding JSON for message {message.id}")
                 attachments = []
-                embeds = []
+                for attachment in msg.attachments:
+                    attachments.append({
+                        'id': attachment.id,
+                        'filename': attachment.filename,
+                        'content_type': attachment.content_type,
+                        'url': f'/api/messages/attachments/{attachment.id}'
+                    })
+                    
+                result.append({
+                    'id': msg.id,
+                    'platform_message_id': msg.platform_message_id,
+                    'channel_id': msg.channel.platform_channel_id,  # 使用Discord的channel ID
+                    'content': msg.content,
+                    'embeds': json.loads(msg.embeds) if msg.embeds else [],
+                    'attachments': attachments,
+                    'referenced_message_id': msg.referenced_message_id,
+                    'referenced_content': msg.referenced_content,
+                    'created_at': msg.created_at.isoformat(),
+                    'author': {
+                        'id': msg.kol.id,
+                        'name': msg.kol.name,
+                        'platform_user_id': msg.kol.platform_user_id
+                    }
+                })
+            except Exception as e:
+                logger.error(f"处理消息 {msg.id} 时出错: {str(e)}")
+                logger.error(f"错误详情: {traceback.format_exc()}")
+                continue
             
-            # 确保content不为None
-            content = message.content
-            if content is None:
-                content = ""
-                logger.debug(f"Message {message.id} has None content, setting to empty string")
-            
-            formatted_message = {
-                "id": message.id,
-                "content": content,
-                "author_name": message.kol.name if message.kol else "Unknown",
-                "channel_name": message.channel.name if message.channel else "Unknown",
-                "channel_id": message.channel.platform_channel_id,
-                "created_at": message.created_at.isoformat() if message.created_at else None,
-                "referenced_message_id": message.referenced_message_id,
-                "referenced_content": message.referenced_content,
-                "attachments": attachments,
-                "embeds": embeds
-            }
-            formatted_messages.append(formatted_message)
-            logger.debug(f"Formatted message: {formatted_message}")
-        except Exception as e:
-            logger.error(f"Error formatting message {message.id}: {str(e)}")
-            continue
-    
-    logger.info(f"Returning {len(formatted_messages)} formatted messages")
-    logger.debug(f"First message content: {formatted_messages[0]['content'] if formatted_messages else 'No messages'}")
-    
-    return {
-        "messages": formatted_messages,
-        "total": total_count,
-        "page": page,
-        "has_more": offset + len(messages) < total_count
-    }
+        logger.info(f"成功处理 {len(result)} 条消息")
+        
+        return {
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'messages': result
+        }
+        
+    except Exception as e:
+        logger.error(f"获取消息列表时出错: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/messages")
 async def create_message(
@@ -266,4 +275,19 @@ async def clear_all_messages(db: Session = Depends(get_db)):
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/messages/attachments/{attachment_id}")
+async def get_attachment(attachment_id: int, db: Session = Depends(get_db)):
+    """获取附件内容"""
+    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+        
+    return Response(
+        content=attachment.file_data,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{attachment.filename}"'
+        }
+    ) 

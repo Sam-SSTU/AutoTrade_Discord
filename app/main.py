@@ -9,6 +9,7 @@ import json
 from typing import List
 import asyncio
 from datetime import datetime
+import os
 
 from .models.base import Base
 from .database import engine
@@ -118,6 +119,11 @@ app.include_router(channels.router, prefix="/api", tags=["channels"])
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+# 配置静态文件服务
+storage_path = os.path.join(os.getcwd(), 'storage')
+os.makedirs(storage_path, exist_ok=True)
+app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
 @app.get("/")
 async def root(request: Request):

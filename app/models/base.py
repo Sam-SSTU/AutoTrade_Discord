@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Enum, Boolean, func
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Enum, Boolean, func, LargeBinary
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.sql import func
 import enum
 from ..database import Base
 
@@ -48,6 +49,19 @@ class KOL(Base):
     
     messages = relationship("Message", back_populates="kol")
 
+class Attachment(Base):
+    __tablename__ = 'attachments'
+    
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+    filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)  # 存储文件的二进制数据
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # 关系
+    message = relationship("Message", back_populates="attachments")
+
 class Message(Base):
     __tablename__ = "messages"
     
@@ -56,11 +70,11 @@ class Message(Base):
     channel_id = Column(Integer, ForeignKey("channels.id"), nullable=False)
     kol_id = Column(Integer, ForeignKey("kols.id"))
     content = Column(String)
-    attachments = Column(JSON)
     embeds = Column(JSON)
     referenced_message_id = Column(String)
     referenced_content = Column(String)
     created_at = Column(DateTime)
     
     channel = relationship("Channel", back_populates="messages")
-    kol = relationship("KOL", back_populates="messages") 
+    kol = relationship("KOL", back_populates="messages")
+    attachments = relationship("Attachment", back_populates="message", cascade="all, delete-orphan") 
