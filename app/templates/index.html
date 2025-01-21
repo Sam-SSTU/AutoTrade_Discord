@@ -677,7 +677,7 @@
                                     {{ isSyncing ? 'Syncing...' : 'Sync' }}
                                 </button>
                             </div>
-                            <small class="text-muted">Enter the number of messages to sync from each channel</small>
+                            <small class="text-muted">Enter the number of messages to sync from each channel and forum thread</small>
                         </div>
 
                         <div class="mb-3">
@@ -1118,19 +1118,21 @@
                         return;
                     }
 
-                    if (!confirm(`Are you sure you want to sync ${this.historyMessageCount} messages from each channel? This may take a while.`)) {
+                    if (!confirm(`Are you sure you want to sync ${this.historyMessageCount} messages from each channel and forum thread? This may take a while.`)) {
                         return;
                     }
 
                     this.isSyncing = true;
                     try {
+                        // 同步普通频道和论坛帖子的历史消息
                         const response = await fetch('/api/messages/sync-history', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
-                                message_count: parseInt(this.historyMessageCount)
+                                message_count: parseInt(this.historyMessageCount),
+                                include_threads: true  // 添加新参数，表示包含论坛帖子
                             })
                         });
 
@@ -1139,16 +1141,35 @@
                             this.addMessageLog({
                                 channel: 'Developer',
                                 author: 'System',
-                                content: `Successfully synced ${result.total_messages} messages from ${result.channel_count} channels`
+                                content: `Successfully synced ${result.total_messages} messages (${result.channel_messages} from channels, ${result.thread_messages} from threads) from ${result.channel_count} channels and ${result.thread_count} threads`
+                            });
+
+                            // 如果当前有选中的频道，刷新消息列表
+                            if (this.selectedChannel) {
+                                await this.loadMessages(this.selectedChannel);
+                            }
+
+                            this.$notify({
+                                title: '同步成功',
+                                message: `已同步 ${result.total_messages} 条消息`,
+                                type: 'success',
+                                duration: 3000
                             });
                         } else {
                             throw new Error('Failed to sync messages');
                         }
                     } catch (error) {
+                        console.error('Error syncing messages:', error);
                         this.addMessageLog({
                             channel: 'Developer',
                             author: 'System',
                             content: `Error syncing messages: ${error.message}`
+                        });
+
+                        this.$notify.error({
+                            title: '同步失败',
+                            message: error.message,
+                            duration: 3000
                         });
                     } finally {
                         this.isSyncing = false;
