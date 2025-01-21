@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import logging
 from pydantic import BaseModel
+import traceback
 
 from ..database import SessionLocal, get_db
 from ..models.base import Channel, KOL, KOLCategory, Message, UnreadMessage, Attachment
@@ -84,9 +85,70 @@ async def get_channels(
 
 @router.post("/channels/sync")
 async def sync_channels(db: Session = Depends(get_db)):
-    """同步Discord中的频道列表到数据库"""
+    """同步Discord中的频道列表和论坛帖子到数据库"""
     result = await get_discord_client().sync_channels_to_db(db)
     return result
+
+@router.post("/channels/sync-threads")
+async def sync_all_threads(db: Session = Depends(get_db)):
+    """同步所有论坛帖子"""
+    try:
+        thread_count = 0
+        # 获取所有论坛频道
+        forum_channels = db.query(Channel).filter(
+            Channel.type == 15,  # Discord论坛频道类型
+            Channel.is_active == True
+        ).all()
+        
+        for channel in forum_channels:
+            try:
+                # 获取帖子列表
+                threads = await get_discord_client().get_forum_threads(channel.platform_channel_id)
+                for thread_data in threads:
+                    thread_id = thread_data.get('id')
+                    thread_name = thread_data.get('name', '未知帖子')
+                    is_archived = thread_data.get('archived', False)
+                    
+                    # 创建或更新帖子作为子频道
+                    thread = db.query(Channel).filter(
+                        Channel.platform_channel_id == str(thread_id)
+                    ).first()
+                    
+                    if not thread:
+                        thread = Channel(
+                            platform_channel_id=str(thread_id),
+                            name=thread_name,
+                            guild_id=channel.guild_id,
+                            guild_name=channel.guild_name,
+                            type=11,  # Discord 帖子类型
+                            parent_id=str(channel.platform_channel_id),
+                            category_name=channel.name,
+                            is_active=False if is_archived else True,  # 已归档的帖子设为非活跃
+                            position=0
+                        )
+                        db.add(thread)
+                        thread_count += 1
+                    else:
+                        thread.name = thread_name
+                        if is_archived:  # 如果是已归档帖子，直接设置为False
+                            thread.is_active = False
+                    
+                    db.commit()
+                
+                message_logger.info(f"论坛 {channel.name} 同步了 {len(threads)} 个帖子")
+            except Exception as e:
+                message_logger.error(f"同步论坛 {channel.name} 帖子失败: {str(e)}")
+                continue
+        
+        return {
+            "message": f"Successfully synced {thread_count} threads",
+            "thread_count": thread_count
+        }
+        
+    except Exception as e:
+        logger.error(f"同步论坛帖子失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/channels/{channel_id}/activate")
 async def activate_channel(channel_id: int, db: Session = Depends(get_db)):

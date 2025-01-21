@@ -95,6 +95,9 @@ uvicorn app.main:app --reload
 stop
 kill -9 $(lsof -ti:8000)
 
+refresh database
+python reset_db.py
+
 访问 http://localhost:8000 即可打开应用。
 
 ## 使用说明

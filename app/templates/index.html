@@ -335,6 +335,48 @@
             font-size: 0.95em;
             white-space: pre-wrap;
         }
+        .forum-channel {
+            margin-left: 8px;
+        }
+        .forum-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 8px;
+            cursor: pointer;
+            color: #8e9297;
+        }
+        .forum-header:hover {
+            background-color: rgba(79,84,92,0.16);
+            color: #dcddde;
+        }
+        .forum-header .btn {
+            padding: 2px 8px;
+            font-size: 12px;
+        }
+        .forum-header .btn:hover {
+            background-color: rgba(79,84,92,0.32);
+            border-color: transparent;
+            color: #fff;
+        }
+        .forum-threads {
+            margin-left: 16px;
+        }
+        .thread-item {
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            cursor: pointer;
+            color: #8e9297;
+        }
+        .thread-item:hover {
+            background-color: rgba(79,84,92,0.16);
+            color: #dcddde;
+        }
+        .thread-item.active {
+            background-color: rgba(79,84,92,0.32);
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -389,22 +431,38 @@
                             <div class="category-header" @click="toggleCategory(category.id)">
                                 <span v-text="category.name || '未分类'"></span>
                             </div>
-                            <div v-show="expandedCategories[category.id]">
-                                <div v-for="channel in category.channels" 
-                                     :key="channel.id" 
-                                     class="channel-item"
-                                     :class="{ active: selectedChannel && selectedChannel.id === channel.id }"
-                                     v-if="channel.is_active"
-                                     @click="selectChannel(channel)">
-                                    <div class="channel-content">
-                                        <el-switch
-                                            v-model="channel.is_forwarding"
-                                            @change="(val) => toggleForwarding(channel, val)"
-                                            active-color="#67C23A"
-                                            inactive-color="#F56C6C"
-                                            class="channel-switch">
-                                        </el-switch>
-                                        <span class="channel-icon">#</span>
+                            <div v-show="expandedCategories[category.id]" class="category-content">
+                                <div v-for="channel in category.channels" :key="channel.id" class="channel-item">
+                                    <div v-if="channel.threads" class="forum-channel">
+                                        <div class="forum-header">
+                                            <div class="d-flex align-items-center gap-2" @click="toggleForum(channel.id)">
+                                                <i class="el-icon-chat-dot-square"></i>
+                                                <span class="channel-text" v-text="channel.name"></span>
+                                                <span v-if="unreadCounts[channel.id]" 
+                                                      class="unread-badge"
+                                                      v-text="unreadCounts[channel.id]">
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div v-show="expandedForums[channel.id]" class="forum-threads">
+                                            <div v-for="thread in channel.threads" :key="thread.id" 
+                                                 class="thread-item"
+                                                 :class="{ active: selectedChannel && selectedChannel.platform_channel_id === thread.platform_channel_id }"
+                                                 @click="selectChannel(thread)">
+                                                <i class="el-icon-chat-line-square"></i>
+                                                <span class="channel-text" v-text="thread.name"></span>
+                                                <span v-if="unreadCounts[thread.platform_channel_id]" 
+                                                      class="unread-badge"
+                                                      v-text="unreadCounts[thread.platform_channel_id]">
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-else
+                                         class="channel-item"
+                                         :class="{ active: selectedChannel && selectedChannel.platform_channel_id === channel.platform_channel_id }"
+                                         @click="selectChannel(channel)">
+                                        <i class="el-icon-chat-line-square"></i>
                                         <span class="channel-text" v-text="channel.name"></span>
                                         <span v-if="unreadCounts[channel.platform_channel_id]" 
                                               class="unread-badge"
@@ -564,9 +622,12 @@
                         <div class="mb-3">
                             <label class="form-label">Channel Management</label>
                             <button class="btn btn-primary w-100 mb-2" @click="syncChannels" :disabled="isSyncing">
-                                {{ isSyncing ? '同步中...' : '同步频道列表' }}
+                                {{ isSyncing ? '同步中...' : '同步频道和帖子' }}
                             </button>
-                            <small class="text-muted">同步可访问的频道，自动跳过无权限频道</small>
+                            <button class="btn btn-outline-primary w-100 mb-2" @click="syncAllThreads" :disabled="isSyncing">
+                                {{ isSyncing ? '同步中...' : '同步所有帖子' }}
+                            </button>
+                            <small class="text-muted">同步可访问的频道和论坛帖子，自动跳过无权限频道</small>
                         </div>
 
                         <div class="mb-3">
@@ -636,6 +697,7 @@
                 localTime: '',
                 clockInterval: null,
                 expandedCategories: {},
+                expandedForums: {},
                 isConnected: false,
                 connectionStatus: '检查中',
                 reconnectAttempts: 0,
@@ -674,6 +736,19 @@
                         }
                     });
                     
+                    // 找出所有论坛频道
+                    const forumChannels = {};
+                    this.channels.forEach(channel => {
+                        if (channel.type === 15) { // 论坛频道类型
+                            forumChannels[channel.platform_channel_id] = {
+                                id: channel.platform_channel_id,
+                                name: channel.name,
+                                position: channel.position || 0,
+                                threads: []
+                            };
+                        }
+                    });
+                    
                     // 将频道分配到对应的分类中
                     this.channels.forEach(channel => {
                         // 跳过分类本身
@@ -681,7 +756,23 @@
                             return;
                         }
                         
-                        // 如果有父分类且该分类存在，添加到分类中
+                        // 如果是论坛帖子，添加到对应的论坛频道中
+                        if (channel.type === 11 && channel.parent_id && forumChannels[channel.parent_id]) {
+                            forumChannels[channel.parent_id].threads.push(channel);
+                            return;
+                        }
+                        
+                        // 如果是论坛频道，添加到对应的分类中
+                        if (channel.type === 15) {
+                            if (channel.parent_id && groups[channel.parent_id]) {
+                                groups[channel.parent_id].channels.push(forumChannels[channel.platform_channel_id]);
+                            } else {
+                                uncategorized.push(forumChannels[channel.platform_channel_id]);
+                            }
+                            return;
+                        }
+                        
+                        // 处理普通频道
                         if (channel.parent_id && groups[channel.parent_id]) {
                             groups[channel.parent_id].channels.push(channel);
                         } else {
@@ -694,18 +785,20 @@
                         group.channels.sort((a, b) => (a.position || 0) - (b.position || 0));
                     });
                     
+                    // 对每个论坛频道中的帖子按名称排序
+                    Object.values(forumChannels).forEach(forum => {
+                        forum.threads.sort((a, b) => a.name.localeCompare(b.name));
+                    });
+                    
                     // 创建结果数组，包括分类和未分类的频道
                     const result = Object.values(groups)
-                        .filter(group => group.channels.length > 0)  // 只显示有频道的分类
                         .sort((a, b) => (a.position || 0) - (b.position || 0));
                     
-                    // 如果有未分类的频道，添加到最后
                     if (uncategorized.length > 0) {
                         result.push({
                             id: 'uncategorized',
                             name: '未分类',
-                            position: 999999,
-                            channels: uncategorized.sort((a, b) => (a.position || 0) - (b.position || 0))
+                            channels: uncategorized
                         });
                     }
                     
@@ -1119,7 +1212,7 @@
                             this.addMessageLog({
                                 channel: 'System',
                                 author: 'System',
-                                content: `频道同步完成: ${result.accessible_count} 个可访问频道, ${result.inaccessible_count} 个无权限频道`
+                                content: `同步完成: ${result.accessible_count} 个可访问频道, ${result.inaccessible_count} 个无权限频道, ${result.thread_count || 0} 个论坛帖子`
                             });
                             
                             // 立即重新加载频道列表
@@ -1463,7 +1556,45 @@
                             duration: 2000
                         });
                     });
-                }
+                },
+                toggleForum(forumId) {
+                    this.$set(this.expandedForums, forumId, !this.expandedForums[forumId]);
+                },
+                async syncAllThreads() {
+                    if (!confirm('确定要同步所有论坛帖子吗？')) {
+                        return;
+                    }
+                    
+                    this.isSyncing = true;
+                    try {
+                        const response = await fetch('/api/channels/sync-threads', {
+                            method: 'POST'
+                        });
+                        
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.addMessageLog({
+                                channel: 'System',
+                                author: 'System',
+                                content: `帖子同步完成: ${result.thread_count} 个论坛帖子`
+                            });
+                            
+                            // 重新加载频道列表以显示新的帖子
+                            await this.loadChannels();
+                        } else {
+                            throw new Error('同步失败');
+                        }
+                    } catch (error) {
+                        console.error('Sync error:', error);
+                        this.addMessageLog({
+                            channel: 'System',
+                            author: 'System',
+                            content: '同步帖子失败: ' + error.message
+                        });
+                    } finally {
+                        this.isSyncing = false;
+                    }
+                },
             },
             watch: {
                 selectedTimezone() {

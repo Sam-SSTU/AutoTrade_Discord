@@ -192,6 +192,91 @@ class DiscordClient:
             message_logger.error("获取频道信息出错")
             return {}
 
+    async def get_forum_threads(self, channel_id: str) -> List[Dict[str, Any]]:
+        """获取论坛频道的所有帖子"""
+        try:
+            await self._create_session()
+            all_threads = set()  # 使用集合避免重复
+            
+            # 1. 通过搜索API获取活跃帖子
+            message_logger.info("尝试获取所有帖子...")
+            offset = 0
+            has_more = True
+            
+            while has_more:
+                url = f'https://discord.com/api/v9/channels/{channel_id}/threads/search'
+                params = {
+                    'limit': 25,  # Discord 限制最大为 25
+                    'offset': offset,
+                    'sort_by': 'last_message_time',
+                    'sort_order': 'desc'
+                }
+                
+                async with self.session.get(url, params=params) as response:
+                    if response.status == 200:
+                        threads_data = await response.json()
+                        threads = threads_data.get('threads', [])
+                        total_results = threads_data.get('total_results', 0)
+                        
+                        if not threads:
+                            has_more = False
+                            continue
+                        
+                        for thread in threads:
+                            thread_data = {
+                                'id': thread.get('id'),
+                                'name': thread.get('name'),
+                                'archived': thread.get('archived', False),
+                                'created_at': thread.get('thread_metadata', {}).get('create_timestamp'),
+                                'owner_id': thread.get('owner_id'),
+                                'parent_id': channel_id
+                            }
+                            all_threads.add(json.dumps(thread_data))
+                        
+                        # 更新 offset
+                        offset += len(threads)
+                        # 如果已经获取了所有结果，停止
+                        if offset >= total_results or len(threads) < 25:
+                            has_more = False
+                    else:
+                        message_logger.error(f"获取活跃帖子失败: {response.status}")
+                        message_logger.error(f"错误响应: {await response.text()}")
+                        has_more = False
+            
+            message_logger.info(f"从搜索中发现 {len(all_threads)} 个帖子")
+            
+            # 2. 获取已归档帖子
+            message_logger.info("尝试获取已归档帖子...")
+            url = f'https://discord.com/api/v9/channels/{channel_id}/threads/archived/public'
+            params = {'limit': 100}
+            
+            async with self.session.get(url, params=params) as response:
+                if response.status == 200:
+                    archived_data = await response.json()
+                    archived_threads = archived_data.get('threads', [])
+                    for thread in archived_threads:
+                        thread_data = {
+                            'id': thread.get('id'),
+                            'name': thread.get('name'),
+                            'archived': True,
+                            'created_at': thread.get('thread_metadata', {}).get('create_timestamp'),
+                            'owner_id': thread.get('owner_id'),
+                            'parent_id': channel_id
+                        }
+                        all_threads.add(json.dumps(thread_data))
+                    message_logger.info(f"获取到 {len(archived_threads)} 个已归档帖子")
+                else:
+                    message_logger.error(f"获取已归档帖子失败: {response.status}")
+                    message_logger.error(f"错误响应: {await response.text()}")
+            
+            # 将JSON字符串转回字典
+            return [json.loads(t) for t in all_threads]
+            
+        except Exception as e:
+            message_logger.error(f"获取论坛帖子出错: {str(e)}")
+            message_logger.error(traceback.format_exc())
+            return []
+
     async def sync_channels_to_db(self, db: Session):
         """同步频道信息到数据库，检查权限并标记不可访问的频道"""
         try:
@@ -199,6 +284,7 @@ class DiscordClient:
             await self._create_session()
             accessible_count = 0
             inaccessible_count = 0
+            thread_count = 0
             
             # 获取用户所在的所有服务器
             message_logger.info("正在获取服务器列表...")
@@ -253,7 +339,7 @@ class DiscordClient:
                                     message_logger.info(f"跳过语音频道: {channel_name}")
                                     continue
                                 
-                                # 检查频道权限（只检查文字频道）
+                                # 检查频道权限（只检查文字频道和论坛频道）
                                 has_access = True if channel_type == 4 else await self._check_channel_access(channel_id)
                                 message_logger.info(f"频道 {channel_name} 权限检查结果: {'有权限' if has_access else '无权限'}")
                                 
@@ -261,62 +347,95 @@ class DiscordClient:
                                 category_name = None
                                 if parent_id and parent_id in categories:
                                     category_name = categories[parent_id].get('name')
-                                    message_logger.info(f"频道 {channel_name} 属于分类: {category_name}")
-                                # 如果是分隔符频道，将其作为一个分类
-                                elif '-' in channel_name and any(c.isspace() for c in channel_name):
-                                    channel_type = 4  # 将分隔符视为分类
-                                    has_access = True  # 分类总是可访问的
-                                    message_logger.info(f"将分隔符频道作为分类处理: {channel_name}")
                                 
-                                # 检查频道是否已存在
+                                # 更新或创建频道记录
                                 channel = db.query(Channel).filter(
                                     Channel.platform_channel_id == str(channel_id)
                                 ).first()
                                 
                                 if not channel:
-                                    message_logger.info(f"创建新频道记录: {channel_name}")
                                     channel = Channel(
                                         platform_channel_id=str(channel_id),
                                         name=channel_name,
                                         guild_id=str(guild_id),
                                         guild_name=guild_name,
                                         type=channel_type,
-                                        parent_id=parent_id,
-                                        position=position,
+                                        parent_id=str(parent_id) if parent_id else None,
                                         category_name=category_name,
-                                        is_active=has_access
+                                        is_active=has_access,
+                                        position=position
                                     )
                                     db.add(channel)
                                 else:
-                                    message_logger.info(f"更新现有频道: {channel_name}")
                                     channel.name = channel_name
+                                    channel.guild_name = guild_name
                                     channel.type = channel_type
-                                    channel.parent_id = parent_id
-                                    channel.position = position
+                                    channel.parent_id = str(parent_id) if parent_id else None
                                     channel.category_name = category_name
                                     channel.is_active = has_access
-                                
-                                if has_access and channel_type != 4:
-                                    accessible_count += 1
-                                elif channel_type != 4:
-                                    inaccessible_count += 1
+                                    channel.position = position
                                 
                                 db.commit()
-                                message_logger.info(f"频道 {channel_name} 处理完成")
+                                
+                                if has_access:
+                                    accessible_count += 1
+                                    
+                                    # 如果是论坛频道，同步帖子
+                                    if channel_type == 15:  # Discord论坛频道类型
+                                        message_logger.info(f"正在同步论坛 {channel_name} 的帖子...")
+                                        try:
+                                            threads = await self.get_forum_threads(channel_id)
+                                            for thread_data in threads:
+                                                thread_id = thread_data.get('id')
+                                                thread_name = thread_data.get('name', '未知帖子')
+                                                is_archived = thread_data.get('archived', False)
+                                                
+                                                # 创建或更新帖子作为子频道
+                                                thread = db.query(Channel).filter(
+                                                    Channel.platform_channel_id == str(thread_id)
+                                                ).first()
+                                                
+                                                if not thread:
+                                                    thread = Channel(
+                                                        platform_channel_id=str(thread_id),
+                                                        name=thread_name,
+                                                        guild_id=str(guild_id),
+                                                        guild_name=guild_name,
+                                                        type=11,  # Discord 帖子类型
+                                                        parent_id=str(channel_id),
+                                                        category_name=channel_name,
+                                                        is_active=False if is_archived else True,  # 已归档的帖子设为非活跃
+                                                        position=0
+                                                    )
+                                                    db.add(thread)
+                                                    thread_count += 1
+                                                else:
+                                                    thread.name = thread_name
+                                                    if is_archived:  # 如果是已归档帖子，直接设置为False
+                                                        thread.is_active = False
+                                                
+                                                db.commit()
+                                            
+                                            message_logger.info(f"论坛 {channel_name} 同步了 {len(threads)} 个帖子")
+                                        except Exception as e:
+                                            message_logger.error(f"同步论坛 {channel_name} 帖子失败: {str(e)}")
+                                else:
+                                    inaccessible_count += 1
                                 
                             except Exception as e:
-                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}\n{traceback.format_exc()}")
-                                db.rollback()
+                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}")
                                 continue
             
-            message_logger.info(f"频道同步完成: {accessible_count} 个可访问频道, {inaccessible_count} 个无权限频道")
+            message_logger.info(f"频道同步完成: {accessible_count} 个可访问频道, {inaccessible_count} 个无权限频道, {thread_count} 个论坛帖子")
             return {
                 "accessible_count": accessible_count,
-                "inaccessible_count": inaccessible_count
+                "inaccessible_count": inaccessible_count,
+                "thread_count": thread_count
             }
             
         except Exception as e:
-            message_logger.error(f"同步频道时出错: {str(e)}\n{traceback.format_exc()}")
+            message_logger.error(f"同步频道时出错: {str(e)}")
+            message_logger.error(traceback.format_exc())
             raise e
 
     async def _check_channel_access(self, channel_id: str) -> bool:
