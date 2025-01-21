@@ -161,7 +161,7 @@ app/
 alembic/           # 数据库迁移
 requirements.txt   # Python 依赖
 ```
-
+ 
 ### 数据库迁移
 
 添加新的数据库变更：
