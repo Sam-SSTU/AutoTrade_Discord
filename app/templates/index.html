@@ -131,20 +131,28 @@
             background-color: #e9ecef;
         }
         .channel-item {
-            padding: 8px 8px 8px 20px;
-            color: #495057;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            padding: 4px 8px;
             cursor: pointer;
-            border-bottom: 1px solid #dee2e6;
+            color: #8e9297;
         }
         .channel-item:hover {
-            background-color: #f8f9fa;
+            background-color: rgba(79,84,92,0.16);
+            color: #dcddde;
         }
         .channel-item.active {
-            background-color: #e9ecef;
-            color: #000;
+            background-color: rgba(79,84,92,0.32);
+            color: #fff;
+        }
+        .channel-item .btn,
+        .thread-item .btn {
+            padding: 2px 8px;
+            font-size: 12px;
+        }
+        .channel-item .btn:hover,
+        .thread-item .btn:hover {
+            background-color: rgba(79,84,92,0.32);
+            border-color: transparent;
+            color: #fff;
         }
         .message-item {
             margin-bottom: 16px;
@@ -443,18 +451,38 @@
                                                       v-text="unreadCounts[channel.id]">
                                                 </span>
                                             </div>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <button class="btn btn-sm" 
+                                                        :class="channel.is_forwarding ? 'btn-success' : 'btn-outline-secondary'"
+                                                        @click.stop="toggleForwarding(channel)"
+                                                        v-if="devMode">
+                                                    <i class="el-icon-connection"></i>
+                                                    {{ channel.is_forwarding ? '已开启' : '已关闭' }}
+                                                </button>
+                                            </div>
                                         </div>
                                         <div v-show="expandedForums[channel.id]" class="forum-threads">
                                             <div v-for="thread in channel.threads" :key="thread.id" 
                                                  class="thread-item"
                                                  :class="{ active: selectedChannel && selectedChannel.platform_channel_id === thread.platform_channel_id }"
                                                  @click="selectChannel(thread)">
-                                                <i class="el-icon-chat-line-square"></i>
-                                                <span class="channel-text" v-text="thread.name"></span>
-                                                <span v-if="unreadCounts[thread.platform_channel_id]" 
-                                                      class="unread-badge"
-                                                      v-text="unreadCounts[thread.platform_channel_id]">
-                                                </span>
+                                                <div class="d-flex align-items-center justify-content-between w-100">
+                                                    <div class="d-flex align-items-center">
+                                                        <i class="el-icon-chat-line-square"></i>
+                                                        <span class="channel-text" v-text="thread.name"></span>
+                                                        <span v-if="unreadCounts[thread.platform_channel_id]" 
+                                                              class="unread-badge"
+                                                              v-text="unreadCounts[thread.platform_channel_id]">
+                                                        </span>
+                                                    </div>
+                                                    <button class="btn btn-sm" 
+                                                            :class="thread.is_forwarding ? 'btn-success' : 'btn-outline-secondary'"
+                                                            @click.stop="toggleForwarding(thread)"
+                                                            v-if="devMode">
+                                                        <i class="el-icon-connection"></i>
+                                                        {{ thread.is_forwarding ? '已开启' : '已关闭' }}
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -462,12 +490,23 @@
                                          class="channel-item"
                                          :class="{ active: selectedChannel && selectedChannel.platform_channel_id === channel.platform_channel_id }"
                                          @click="selectChannel(channel)">
-                                        <i class="el-icon-chat-line-square"></i>
-                                        <span class="channel-text" v-text="channel.name"></span>
-                                        <span v-if="unreadCounts[channel.platform_channel_id]" 
-                                              class="unread-badge"
-                                              v-text="unreadCounts[channel.platform_channel_id]">
-                                        </span>
+                                        <div class="d-flex align-items-center justify-content-between w-100">
+                                            <div class="d-flex align-items-center">
+                                                <i class="el-icon-chat-line-square"></i>
+                                                <span class="channel-text" v-text="channel.name"></span>
+                                                <span v-if="unreadCounts[channel.platform_channel_id]" 
+                                                      class="unread-badge"
+                                                      v-text="unreadCounts[channel.platform_channel_id]">
+                                                </span>
+                                            </div>
+                                            <button class="btn btn-sm" 
+                                                    :class="channel.is_forwarding ? 'btn-success' : 'btn-outline-secondary'"
+                                                    @click.stop="toggleForwarding(channel)"
+                                                    v-if="devMode">
+                                                <i class="el-icon-connection"></i>
+                                                {{ channel.is_forwarding ? '已开启' : '已关闭' }}
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1525,29 +1564,32 @@
                         });
                     }
                 },
-                toggleForwarding(channel, newValue) {
-                    fetch(`/api/channels/${channel.platform_channel_id}/forwarding`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ is_forwarding: newValue })
-                    })
-                    .then(response => {
+                async toggleForwarding(channel) {
+                    const newValue = !channel.is_forwarding;
+                    channel.is_forwarding = newValue;  // 立即更新UI
+                    
+                    try {
+                        const response = await fetch(`/api/channels/${channel.platform_channel_id}/forwarding`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                is_forwarding: newValue
+                            })
+                        });
+                        
                         if (!response.ok) {
-                            throw new Error('Failed to update channel forwarding status');
+                            throw new Error('更新失败');
                         }
-                        return response.json();
-                    })
-                    .then(() => {
+                        
                         this.$notify({
                             title: '成功',
                             message: `已${newValue ? '开启' : '关闭'}转发`,
                             type: 'success',
                             duration: 2000
                         });
-                    })
-                    .catch(error => {
+                    } catch (error) {
                         console.error('Error toggling channel forwarding:', error);
                         channel.is_forwarding = !newValue;  // 恢复原来的状态
                         this.$notify.error({
@@ -1555,7 +1597,7 @@
                             message: '更新转发状态失败',
                             duration: 2000
                         });
-                    });
+                    }
                 },
                 toggleForum(forumId) {
                     this.$set(this.expandedForums, forumId, !this.expandedForums[forumId]);
