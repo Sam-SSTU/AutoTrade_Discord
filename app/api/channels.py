@@ -36,6 +36,9 @@ class ChannelForwardingUpdate(BaseModel):
 class ChannelActiveUpdate(BaseModel):
     is_active: bool
 
+class ThreadSyncRequest(BaseModel):
+    message_count: Optional[int] = 100
+
 @router.get("/channels")
 async def get_channels(
     guild_id: Optional[str] = None,
@@ -90,10 +93,11 @@ async def sync_channels(db: Session = Depends(get_db)):
     return result
 
 @router.post("/channels/sync-threads")
-async def sync_all_threads(db: Session = Depends(get_db)):
+async def sync_all_threads(request: ThreadSyncRequest = None, db: Session = Depends(get_db)):
     """同步所有论坛帖子"""
     try:
         thread_count = 0
+        message_count = request.message_count if request else 100
         # 获取所有论坛频道
         forum_channels = db.query(Channel).filter(
             Channel.type == 15,  # Discord论坛频道类型
@@ -105,35 +109,58 @@ async def sync_all_threads(db: Session = Depends(get_db)):
                 # 获取帖子列表
                 threads = await get_discord_client().get_forum_threads(channel.platform_channel_id)
                 for thread_data in threads:
-                    thread_id = thread_data.get('id')
-                    thread_name = thread_data.get('name', '未知帖子')
-                    is_archived = thread_data.get('archived', False)
-                    
-                    # 创建或更新帖子作为子频道
-                    thread = db.query(Channel).filter(
-                        Channel.platform_channel_id == str(thread_id)
-                    ).first()
-                    
-                    if not thread:
-                        thread = Channel(
-                            platform_channel_id=str(thread_id),
-                            name=thread_name,
-                            guild_id=channel.guild_id,
-                            guild_name=channel.guild_name,
-                            type=11,  # Discord 帖子类型
-                            parent_id=str(channel.platform_channel_id),
-                            category_name=channel.name,
-                            is_active=False if is_archived else True,  # 已归档的帖子设为非活跃
-                            position=0
-                        )
-                        db.add(thread)
-                        thread_count += 1
-                    else:
-                        thread.name = thread_name
-                        if is_archived:  # 如果是已归档帖子，直接设置为False
-                            thread.is_active = False
-                    
-                    db.commit()
+                    # 为每个帖子创建新的数据库会话
+                    thread_db = SessionLocal()
+                    try:
+                        thread_id = thread_data.get('id')
+                        thread_name = thread_data.get('name', '未知帖子')
+                        is_archived = thread_data.get('archived', False)
+                        
+                        # 创建或更新帖子作为子频道
+                        thread = thread_db.query(Channel).filter(
+                            Channel.platform_channel_id == str(thread_id)
+                        ).first()
+                        
+                        if not thread:
+                            thread = Channel(
+                                platform_channel_id=str(thread_id),
+                                name=thread_name,
+                                guild_id=channel.guild_id,
+                                guild_name=channel.guild_name,
+                                type=11,  # Discord 帖子类型
+                                parent_id=str(channel.platform_channel_id),
+                                category_name=channel.name,
+                                is_active=False if is_archived else True,
+                                position=0,
+                                owner_id=thread_data.get('owner_id')
+                            )
+                            thread_db.add(thread)
+                            thread_count += 1
+                        else:
+                            thread.name = thread_name
+                            if is_archived:  # 如果是已归档帖子，直接设置为False
+                                thread.is_active = False
+                        
+                        thread_db.commit()
+
+                        # 同步帖子的历史消息
+                        if not is_archived and message_count > 0:
+                            messages = await get_discord_client().get_channel_messages(thread_id, limit=message_count)
+                            # 为每条消息创建新的数据库会话
+                            for msg in messages:
+                                msg_db = SessionLocal()
+                                try:
+                                    await get_discord_client().store_message(msg, msg_db)
+                                except Exception as e:
+                                    message_logger.error(f"存储消息失败: {str(e)}")
+                                    msg_db.rollback()
+                                finally:
+                                    msg_db.close()
+                    except Exception as e:
+                        message_logger.error(f"处理帖子 {thread_name} 失败: {str(e)}")
+                        thread_db.rollback()
+                    finally:
+                        thread_db.close()
                 
                 message_logger.info(f"论坛 {channel.name} 同步了 {len(threads)} 个帖子")
             except Exception as e:

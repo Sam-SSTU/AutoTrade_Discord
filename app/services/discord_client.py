@@ -404,8 +404,9 @@ class DiscordClient:
                                                         type=11,  # Discord 帖子类型
                                                         parent_id=str(channel_id),
                                                         category_name=channel_name,
-                                                        is_active=False if is_archived else True,  # 已归档的帖子设为非活跃
-                                                        position=0
+                                                        is_active=False if is_archived else True,
+                                                        position=0,
+                                                        owner_id=thread_data.get('owner_id')  # 添加帖子创建者ID
                                                     )
                                                     db.add(thread)
                                                     thread_count += 1
@@ -461,6 +462,10 @@ class DiscordClient:
         try:
             # Check if message already exists
             platform_message_id = str(message_data.get('id'))
+            if not platform_message_id:
+                message_logger.error("Message ID not found in message data")
+                return
+                
             existing_message = db.query(Message).filter(
                 Message.platform_message_id == platform_message_id
             ).first()
@@ -470,29 +475,62 @@ class DiscordClient:
                 return
             
             # Get channel
+            channel_id = str(message_data.get('channel_id'))
+            if not channel_id:
+                message_logger.error("Channel ID not found in message data")
+                return
+                
             channel = db.query(Channel).filter(
-                Channel.platform_channel_id == str(message_data.get('channel_id'))
+                Channel.platform_channel_id == channel_id
             ).first()
             
             if not channel:
-                message_logger.error(f"Channel not found: {message_data.get('channel_id')}")
+                message_logger.error(f"Channel not found: {channel_id}")
                 return
-            
-            # Get or create KOL
-            author = message_data.get('author', {})
-            kol = db.query(KOL).filter(
-                KOL.platform_user_id == str(author.get('id'))
-            ).first()
-            
-            if not kol:
-                kol = KOL(
-                    name=author.get('username'),
-                    platform=Platform.DISCORD.value,
-                    platform_user_id=str(author.get('id')),
-                    is_active=True
-                )
-                db.add(kol)
-                db.commit()
+
+            # 如果是帖子类型的频道，使用帖子名称作为KOL名称
+            if channel.type == 11:  # Discord帖子类型
+                # 使用帖子名称作为KOL标识
+                kol = db.query(KOL).filter(
+                    KOL.platform == Platform.DISCORD.value,
+                    KOL.name == channel.name  # 使用帖子名称作为KOL名称
+                ).first()
+                
+                if not kol:
+                    kol = KOL(
+                        name=channel.name,  # 使用帖子名称
+                        platform=Platform.DISCORD.value,
+                        platform_user_id=channel.platform_channel_id,  # 使用帖子ID作为platform_user_id
+                        is_active=True
+                    )
+                    db.add(kol)
+                    db.commit()
+            else:
+                # 对于非帖子类型的频道，使用原来的作者逻辑
+                author = message_data.get('author', {})
+                if not author:
+                    message_logger.error(f"Author data not found in message: {platform_message_id}")
+                    return
+                    
+                author_id = str(author.get('id'))
+                if not author_id:
+                    message_logger.error(f"Author ID not found in message data: {platform_message_id}")
+                    return
+                    
+                kol = db.query(KOL).filter(
+                    KOL.platform == Platform.DISCORD.value,
+                    KOL.platform_user_id == author_id
+                ).first()
+                
+                if not kol:
+                    kol = KOL(
+                        name=f"{author.get('username')}#{author.get('discriminator', '0')}",
+                        platform=Platform.DISCORD.value,
+                        platform_user_id=author_id,
+                        is_active=True
+                    )
+                    db.add(kol)
+                    db.commit()
             
             # Create message
             message = Message(
