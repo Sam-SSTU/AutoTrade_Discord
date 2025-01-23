@@ -112,7 +112,7 @@ async def create_message(
             content=message_create.content,
             channel_id=channel.id,
             kol_id=kol.id,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.utcnow()  # 使用 utcnow() 获取纯 UTC 时间
         )
         
         db.add(message)
@@ -123,13 +123,13 @@ async def create_message(
         await increment_unread_count(channel.id, db)
         
         # 广播新消息通知
-        discord_client.broadcast_message({
+        await discord_client.broadcast_message({
             'type': 'new_message',
             'channel_id': channel.platform_channel_id,
             'channel_name': channel.name,
             'author_name': kol.name,
             'content': message.content,
-            'created_at': message.created_at.isoformat()
+            'created_at': message.created_at.strftime("%Y-%m-%d %H:%M:%S")  # 格式化为纯时间字符串
         })
 
         # 如果频道启用了转发，则转发到AI模块
@@ -139,7 +139,8 @@ async def create_message(
                 joinedload(Message.channel),
                 joinedload(Message.attachments)
             ).filter(Message.id == message.id).first()
-            await ai_message_handler.broadcast_message(message)
+            # 存储到AI消息表并广播
+            await ai_message_handler.store_message(db, message)
         
         return {
             "id": message.id,
