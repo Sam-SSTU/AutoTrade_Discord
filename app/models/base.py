@@ -31,6 +31,7 @@ class Channel(Base):
     position = Column(Integer, default=0)  # 频道在分类中的位置
     parent_id = Column(String)  # 父频道ID（对应Discord的category ID）
     type = Column(Integer)  # Discord的频道类型（0=text, 2=voice, 4=category等）
+    owner_id = Column(String, nullable=True)  # 帖子创建者ID
     is_active = Column(Boolean, default=False)
     is_forwarding = Column(Boolean, default=False)  # 是否转发到AI模块
     kol_category = Column(Enum(KOLCategory), nullable=True)
