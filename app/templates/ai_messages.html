@@ -39,7 +39,9 @@
                         <div class="message-header">
                             <div class="message-info">
                                 <span class="channel-name">[{% raw %}{{ message.channel_name }}{% endraw %}]</span>
-                                <span class="time">{% raw %}{{ formatDate(message.created_at) }}{% endraw %}</span>
+                                <span class="time">{% raw %}{{ formatDate(message.created_at) }}{% endraw %} (本地)</span>
+                                <span class="time">{% raw %}{{ formatUTCDate(message.created_at) }}{% endraw %}</span>
+                                <span class="original-time" v-if="message.showDetails">(原始: {% raw %}{{ message.created_at }}{% endraw %})</span>
                             </div>
                         </div>
                         <div class="message-content">
@@ -55,6 +57,14 @@
                                          :alt="attachment.filename"
                                          class="attachment-image"
                                          @click="showImagePreview(attachment)">
+                                </div>
+                            </div>
+                            <div class="message-details">
+                                <el-button type="text" size="small" @click="message.showDetails = !message.showDetails"
+                                    v-text="message.showDetails ? '隐藏详情' : '显示详情'">
+                                </el-button>
+                                <div v-show="message.showDetails" class="details-content">
+                                    <pre>{% raw %}{{ JSON.stringify(message, null, 2) }}{% endraw %}</pre>
                                 </div>
                             </div>
                         </div>
@@ -104,12 +114,37 @@
                     
                     this.ws.onmessage = (event) => {
                         const message = JSON.parse(event.data);
+                        message.showDetails = false;
                         this.messages.unshift(message);
                     };
                 },
                 formatDate(dateString) {
                     const date = new Date(dateString);
-                    return date.toLocaleString();
+                    // 本地时间
+                    const localTime = date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                    return localTime;
+                },
+                formatUTCDate(dateString) {
+                    const date = new Date(dateString);
+                    // UTC时间
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: 'UTC'
+                    }) + ' UTC';
                 },
                 showImagePreview(attachment) {
                     this.previewImageUrl = attachment.url;
@@ -248,6 +283,32 @@
     .header-left h1 {
         margin: 0;
         font-size: 1.5rem;
+    }
+
+    .message-details {
+        margin-top: 1rem;
+        border-top: 1px solid #ebeef5;
+        padding-top: 0.5rem;
+    }
+
+    .details-content {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 0.5rem;
+        overflow-x: auto;
+    }
+
+    .details-content pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .original-time {
+        color: #909399;
+        font-size: 0.8em;
+        font-family: monospace;
     }
     </style>
 </body>

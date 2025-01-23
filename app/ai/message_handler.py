@@ -3,6 +3,7 @@ from ..models import Message, Channel
 from sqlalchemy.orm import Session
 from fastapi import WebSocket
 import json
+from datetime import timezone
 
 class AIMessageHandler:
     def __init__(self):
@@ -19,15 +20,26 @@ class AIMessageHandler:
         """
         广播消息到所有连接的客户端
         """
+        # 确保时间是UTC时间
+        created_at_utc = message.created_at.astimezone(timezone.utc)
+        
         message_data = {
             "id": message.id,
+            "platform_message_id": message.platform_message_id,
             "content": message.content,
+            "channel_id": message.channel.id,
+            "platform_channel_id": message.channel.platform_channel_id,
             "channel_name": message.channel.name,
-            "created_at": message.created_at.isoformat(),
+            "guild_id": message.channel.guild_id,
+            "guild_name": message.channel.guild_name,
+            "created_at": created_at_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),  # 使用UTC格式
+            "referenced_message_id": message.referenced_message_id,
             "referenced_content": message.referenced_content,
             "attachments": [
                 {
+                    "id": attachment.id,
                     "filename": attachment.filename,
+                    "content_type": attachment.content_type,
                     "url": f"/api/messages/attachments/{attachment.id}"
                 }
                 for attachment in message.attachments
