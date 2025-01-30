@@ -200,7 +200,9 @@ class DiscordClient:
             all_threads = set()  # 使用集合避免重复
             
             # 1. 通过搜索API获取活跃帖子
-            message_logger.info("尝试获取所有帖子...")
+            start_msg = "尝试获取所有帖子..."
+            print(start_msg)
+            message_logger.info(start_msg)
             offset = 0
             has_more = True
             
@@ -240,14 +242,19 @@ class DiscordClient:
                         if offset >= total_results or len(threads) < 25:
                             has_more = False
                     else:
-                        message_logger.error(f"获取活跃帖子失败: {response.status}")
-                        message_logger.error(f"错误响应: {await response.text()}")
+                        error_msg = f"获取活跃帖子失败: {response.status}\n错误响应: {await response.text()}"
+                        print(error_msg)
+                        message_logger.error(error_msg)
                         has_more = False
             
-            message_logger.info(f"从搜索中发现 {len(all_threads)} 个帖子")
+            threads_found_msg = f"从搜索中发现 {len(all_threads)} 个帖子"
+            print(threads_found_msg)
+            message_logger.info(threads_found_msg)
             
             # 2. 获取已归档帖子
-            message_logger.info("尝试获取已归档帖子...")
+            archive_msg = "尝试获取已归档帖子..."
+            print(archive_msg)
+            message_logger.info(archive_msg)
             url = f'https://discord.com/api/v9/channels/{channel_id}/threads/archived/public'
             params = {'limit': 100}
             
@@ -265,52 +272,75 @@ class DiscordClient:
                             'parent_id': channel_id
                         }
                         all_threads.add(json.dumps(thread_data))
-                    message_logger.info(f"获取到 {len(archived_threads)} 个已归档帖子")
+                    archived_msg = f"获取到 {len(archived_threads)} 个已归档帖子"
+                    print(archived_msg)
+                    message_logger.info(archived_msg)
                 else:
-                    message_logger.error(f"获取已归档帖子失败: {response.status}")
-                    message_logger.error(f"错误响应: {await response.text()}")
+                    error_msg = f"获取已归档帖子失败: {response.status}\n错误响应: {await response.text()}"
+                    print(error_msg)
+                    message_logger.error(error_msg)
             
             # 将JSON字符串转回字典
             return [json.loads(t) for t in all_threads]
             
         except Exception as e:
-            message_logger.error(f"获取论坛帖子出错: {str(e)}")
+            error_msg = f"获取论坛帖子出错: {str(e)}"
+            print(error_msg)
+            message_logger.error(error_msg)
             message_logger.error(traceback.format_exc())
             return []
 
     async def sync_channels_to_db(self, db: Session):
         """同步频道信息到数据库，检查权限并标记不可访问的频道"""
         try:
-            message_logger.info("开始同步频道...")
+            # 发送开始同步通知到 Telegram
+            start_msg = "🚀 开始同步 Discord 频道和帖子..."
+            print(start_msg)
+            message_logger.info(start_msg, extra={'startup_msg': True})
+            
             await self._create_session()
             accessible_count = 0
             inaccessible_count = 0
             thread_count = 0
             
             # 获取用户所在的所有服务器
-            message_logger.info("正在获取服务器列表...")
+            guild_msg = "正在获取服务器列表..."
+            print(guild_msg)
+            message_logger.info(guild_msg)
             async with self.session.get('https://discord.com/api/v9/users/@me/guilds') as response:
                 if response.status != 200:
-                    message_logger.error(f"获取服务器列表失败: HTTP {response.status}")
+                    error_msg = f"获取服务器列表失败: HTTP {response.status}"
+                    print(error_msg)
+                    message_logger.error(error_msg)
                     raise Exception("Failed to fetch guilds")
                     
                 guilds = await response.json()
-                message_logger.info(f"发现 {len(guilds)} 个服务器")
+                guild_found_msg = f"发现 {len(guilds)} 个服务器"
+                print(guild_found_msg)
+                message_logger.info(guild_found_msg)
                 
                 for guild in guilds:
                     guild_id = guild['id']
                     guild_name = guild['name']
-                    message_logger.info(f"正在处理服务器: {guild_name} (ID: {guild_id})")
+                    guild_process_msg = f"正在处理服务器: {guild_name} (ID: {guild_id})"
+                    print(guild_process_msg)
+                    message_logger.info(guild_process_msg)
                     
                     # 获取服务器中的所有频道
-                    message_logger.info(f"正在获取服务器 {guild_name} 的频道列表...")
+                    channel_list_msg = f"正在获取服务器 {guild_name} 的频道列表..."
+                    print(channel_list_msg)
+                    message_logger.info(channel_list_msg)
                     async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels') as channels_response:
                         if channels_response.status != 200:
-                            message_logger.error(f"获取服务器 {guild_name} 的频道列表失败: HTTP {channels_response.status}")
+                            error_msg = f"获取服务器 {guild_name} 的频道列表失败: HTTP {channels_response.status}"
+                            print(error_msg)
+                            message_logger.error(error_msg)
                             continue
                             
                         channels = await channels_response.json()
-                        message_logger.info(f"在服务器 {guild_name} 中发现 {len(channels)} 个频道")
+                        channels_found_msg = f"在服务器 {guild_name} 中发现 {len(channels)} 个频道"
+                        print(channels_found_msg)
+                        message_logger.info(channels_found_msg)
                         
                         # 创建一个映射来存储分类信息
                         categories = {}
@@ -322,7 +352,9 @@ class DiscordClient:
                                 categories[channel['id']] = channel
                                 category_count += 1
                         
-                        message_logger.info(f"发现 {category_count} 个分类")
+                        categories_msg = f"发现 {category_count} 个分类"
+                        print(categories_msg)
+                        message_logger.info(categories_msg)
                         
                         # 处理所有频道
                         for channel_data in channels:
@@ -333,16 +365,22 @@ class DiscordClient:
                                 parent_id = channel_data.get('parent_id')
                                 position = channel_data.get('position', 0)
                                 
-                                message_logger.info(f"处理频道: {channel_name} (ID: {channel_id}, 类型: {channel_type})")
+                                process_channel_msg = f"处理频道: {channel_name} (ID: {channel_id}, 类型: {channel_type})"
+                                print(process_channel_msg)
+                                message_logger.info(process_channel_msg)
                                 
                                 # 如果是语音频道，跳过
                                 if channel_type == 2:
-                                    message_logger.info(f"跳过语音频道: {channel_name}")
+                                    skip_msg = f"跳过语音频道: {channel_name}"
+                                    print(skip_msg)
+                                    message_logger.info(skip_msg)
                                     continue
                                 
                                 # 检查频道权限（只检查文字频道和论坛频道）
                                 has_access = True if channel_type == 4 else await self._check_channel_access(channel_id)
-                                message_logger.info(f"频道 {channel_name} 权限检查结果: {'有权限' if has_access else '无权限'}")
+                                access_msg = f"频道 {channel_name} 权限检查结果: {'有权限' if has_access else '无权限'}"
+                                print(access_msg)
+                                message_logger.info(access_msg)
                                 
                                 # 获取分类名称
                                 category_name = None
@@ -383,7 +421,9 @@ class DiscordClient:
                                     
                                     # 如果是论坛频道，同步帖子
                                     if channel_type == 15:  # Discord论坛频道类型
-                                        message_logger.info(f"正在同步论坛 {channel_name} 的帖子...")
+                                        forum_sync_msg = f"正在同步论坛 {channel_name} 的帖子..."
+                                        print(forum_sync_msg)
+                                        message_logger.info(forum_sync_msg)
                                         try:
                                             threads = await self.get_forum_threads(channel_id)
                                             for thread_data in threads:
@@ -418,17 +458,30 @@ class DiscordClient:
                                                 
                                                 db.commit()
                                             
-                                            message_logger.info(f"论坛 {channel_name} 同步了 {len(threads)} 个帖子")
+                                            forum_threads_msg = f"论坛 {channel_name} 同步了 {len(threads)} 个帖子"
+                                            print(forum_threads_msg)
+                                            message_logger.info(forum_threads_msg)
                                         except Exception as e:
-                                            message_logger.error(f"同步论坛 {channel_name} 帖子失败: {str(e)}")
+                                            error_msg = f"同步论坛 {channel_name} 帖子失败: {str(e)}"
+                                            print(error_msg)
+                                            message_logger.error(error_msg)
                                 else:
                                     inaccessible_count += 1
                                 
                             except Exception as e:
-                                message_logger.error(f"处理频道 {channel_name} 时出错: {str(e)}")
+                                error_msg = f"处理频道 {channel_name} 时出错: {str(e)}"
+                                print(error_msg)
+                                message_logger.error(error_msg)
                                 continue
             
-            message_logger.info(f"频道同步完成: {accessible_count} 个可访问频道, {inaccessible_count} 个无权限频道, {thread_count} 个论坛帖子")
+            # 发送同步完成通知到 Telegram
+            final_msg = f"""🎉 Discord 频道同步完成:
+- {accessible_count} 个可访问频道
+- {inaccessible_count} 个无权限频道
+- {thread_count} 个论坛帖子"""
+            print(final_msg)
+            message_logger.info(final_msg, extra={'startup_msg': True})
+            
             return {
                 "accessible_count": accessible_count,
                 "inaccessible_count": inaccessible_count,
@@ -436,7 +489,9 @@ class DiscordClient:
             }
             
         except Exception as e:
-            message_logger.error(f"同步频道时出错: {str(e)}")
+            error_msg = f"❌ Discord 频道同步出错: {str(e)}"
+            print(error_msg)
+            message_logger.error(error_msg, extra={'startup_msg': True})
             message_logger.error(traceback.format_exc())
             raise e
 
