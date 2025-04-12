@@ -1,6 +1,6 @@
 # Discord Message Manager
-## Current version: 0.0.1
-## Currently focusing on this project since 2025-03-13
+
+# Refractor Version
 
 
 一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。
