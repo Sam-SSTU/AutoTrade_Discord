@@ -1,5 +1,5 @@
 # Discord Message Manager
-# Still building. Not working at this time.
+# Still building. 持续开发中
 
 一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。
 
