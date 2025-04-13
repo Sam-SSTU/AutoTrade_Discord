@@ -1,4 +1,5 @@
 # Discord Message Manager
+
 # Still building. 持续开发中
 
 一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。
@@ -96,6 +97,9 @@ uvicorn app.main:app --reload
 stop
 kill -9 $(lsof -ti:8000)
 
+refresh database
+python reset_db.py
+
 访问 http://localhost:8000 即可打开应用。
 
 ## 使用说明
@@ -159,7 +163,7 @@ app/
 alembic/           # 数据库迁移
 requirements.txt   # Python 依赖
 ```
-
+ 
 ### 数据库迁移
 
 添加新的数据库变更：

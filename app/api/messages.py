@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Body, Response, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from ..database import SessionLocal, get_db
 from ..models.base import Message, KOL, Platform, Channel, Attachment, UnreadMessage
 from ..services.discord_client import DiscordClient
 from ..services.file_utils import FileHandler
+from ..ai.message_handler import ai_message_handler
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class MessageCreate(BaseModel):
 
 class SyncHistoryRequest(BaseModel):
     message_count: int
+    include_threads: bool = False  # 新增参数，控制是否同步论坛帖子
 
 class ChannelReadRequest(BaseModel):
     channel_id: str
@@ -63,6 +65,8 @@ async def get_messages(
                 "content": message.content,
                 "author_name": message.kol.name,
                 "created_at": message.created_at.isoformat(),
+                "referenced_message_id": message.referenced_message_id,
+                "referenced_content": message.referenced_content,
                 "attachments": [
                     {
                         "id": attachment.id,
@@ -108,7 +112,7 @@ async def create_message(
             content=message_create.content,
             channel_id=channel.id,
             kol_id=kol.id,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.utcnow()  # 使用 utcnow() 获取纯 UTC 时间
         )
         
         db.add(message)
@@ -119,14 +123,24 @@ async def create_message(
         await increment_unread_count(channel.id, db)
         
         # 广播新消息通知
-        discord_client.broadcast_message({
+        await discord_client.broadcast_message({
             'type': 'new_message',
             'channel_id': channel.platform_channel_id,
             'channel_name': channel.name,
             'author_name': kol.name,
             'content': message.content,
-            'created_at': message.created_at.isoformat()
+            'created_at': message.created_at.strftime("%Y-%m-%d %H:%M:%S")  # 格式化为纯时间字符串
         })
+
+        # 如果频道启用了转发，则转发到AI模块
+        if channel.is_forwarding:
+            # 重新查询以获取完整的关联数据
+            message = db.query(Message).options(
+                joinedload(Message.channel),
+                joinedload(Message.attachments)
+            ).filter(Message.id == message.id).first()
+            # 存储到AI消息表并广播
+            await ai_message_handler.store_message(db, message)
         
         return {
             "id": message.id,
@@ -191,70 +205,112 @@ async def sync_history_messages(
         raise HTTPException(status_code=400, detail="Message count must be positive")
 
     total_messages = 0
+    channel_messages = 0  # 普通频道消息数
+    thread_messages = 0   # 论坛帖子消息数
     channel_count = 0
+    thread_count = 0
     errors = []
     
     # 获取所有频道的基本信息
-    channels = [(channel.platform_channel_id, channel.name) for channel in db.query(Channel).all()]
+    channels = db.query(Channel).all()
     
     # 创建信号量限制并发数
-    semaphore = asyncio.Semaphore(3)  # 降低并发数到3
-    
-    async def process_channel(channel_id: str, channel_name: str):
-        nonlocal total_messages, channel_count
+    semaphore = asyncio.Semaphore(3)
+
+    async def process_channel(channel: Channel):
+        nonlocal total_messages, channel_messages, thread_messages, channel_count, thread_count
         # 为每个频道创建新的数据库会话
         channel_db = SessionLocal()
         try:
             async with semaphore:
-                # 获取历史消息
-                messages = await discord_client.get_channel_messages(
-                    channel_id,
-                    limit=request.message_count
-                )
-                
-                if not messages:
-                    logger.info(f"频道 {channel_name} 没有历史消息")
+                # 如果是论坛频道且不需要同步帖子，则跳过
+                if channel.type == 15 and not request.include_threads:
                     return
-                
-                # 存储消息
-                success_count = 0
-                for message_data in messages:
-                    try:
-                        # 使用频道专用的数据库会话
-                        await discord_client.store_message(message_data, channel_db)
-                        success_count += 1
-                    except Exception as e:
-                        logger.error(f"存储消息失败: {str(e)}")
-                        errors.append(f"频道 {channel_name} 消息 {message_data.get('id')} 存储失败: {str(e)}")
-                        # 回滚当前消息的事务
-                        channel_db.rollback()
-                        continue
-                
-                if success_count > 0:
-                    total_messages += success_count
-                    channel_count += 1
-                    logger.info(f"频道 {channel_name} 成功同步 {success_count} 条消息")
+
+                # 如果是论坛帖子且需要同步帖子
+                if channel.type == 11 and request.include_threads:
+                    # 获取历史消息
+                    messages = await discord_client.get_channel_messages(
+                        channel.platform_channel_id,
+                        limit=request.message_count
+                    )
                     
+                    if not messages:
+                        logger.info(f"帖子 {channel.name} 没有历史消息")
+                        return
+                    
+                    # 存储消息
+                    success_count = 0
+                    for message_data in messages:
+                        try:
+                            await discord_client.store_message(message_data, channel_db)
+                            success_count += 1
+                        except Exception as e:
+                            logger.error(f"存储消息失败: {str(e)}")
+                            errors.append(f"帖子 {channel.name} 消息 {message_data.get('id')} 存储失败: {str(e)}")
+                            channel_db.rollback()
+                            continue
+                    
+                    if success_count > 0:
+                        thread_messages += success_count
+                        thread_count += 1
+                        logger.info(f"帖子 {channel.name} 成功同步 {success_count} 条消息")
+                    return
+
+                # 处理普通频道
+                if channel.type not in [4, 15]:  # 排除分类和论坛频道
+                    messages = await discord_client.get_channel_messages(
+                        channel.platform_channel_id,
+                        limit=request.message_count
+                    )
+                    
+                    if not messages:
+                        logger.info(f"频道 {channel.name} 没有历史消息")
+                        return
+                    
+                    # 存储消息
+                    success_count = 0
+                    for message_data in messages:
+                        try:
+                            await discord_client.store_message(message_data, channel_db)
+                            success_count += 1
+                        except Exception as e:
+                            logger.error(f"存储消息失败: {str(e)}")
+                            errors.append(f"频道 {channel.name} 消息 {message_data.get('id')} 存储失败: {str(e)}")
+                            channel_db.rollback()
+                            continue
+                    
+                    if success_count > 0:
+                        channel_messages += success_count
+                        channel_count += 1
+                        logger.info(f"频道 {channel.name} 成功同步 {success_count} 条消息")
+                
         except Exception as e:
             logger.error(f"处理频道失败: {str(e)}")
-            errors.append(f"处理频道 {channel_name} 失败: {str(e)}")
+            errors.append(f"处理频道 {channel.name} 失败: {str(e)}")
             channel_db.rollback()
         finally:
             # 确保关闭数据库会话
             channel_db.close()
-    
+
     # 并发处理所有频道
-    tasks = [process_channel(channel_id, channel_name) for channel_id, channel_name in channels]
+    tasks = [process_channel(channel) for channel in channels]
     await asyncio.gather(*tasks)
     
+    # 计算总消息数
+    total_messages = channel_messages + thread_messages
+    
     # 添加详细的结果日志
-    logger.info(f"同步完成: 处理了 {channel_count} 个频道，共 {total_messages} 条消息")
+    logger.info(f"同步完成: 处理了 {channel_count} 个频道和 {thread_count} 个帖子，共 {total_messages} 条消息")
     if errors:
         logger.warning(f"发生了 {len(errors)} 个错误")
     
     return {
         "total_messages": total_messages,
+        "channel_messages": channel_messages,
+        "thread_messages": thread_messages,
         "channel_count": channel_count,
+        "thread_count": thread_count,
         "errors": errors if errors else None
     }
 
@@ -326,17 +382,29 @@ async def clear_all_messages(db: Session = Depends(get_db)):
 @router.get("/messages/attachments/{attachment_id}")
 async def get_attachment(attachment_id: int, db: Session = Depends(get_db)):
     """获取附件内容"""
-    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
-    if not attachment:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        logger.info(f"Fetching attachment with ID: {attachment_id}")
+        attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
         
-    return Response(
-        content=attachment.file_data,
-        media_type=attachment.content_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{attachment.filename}"'
-        }
-    )
+        if not attachment:
+            logger.error(f"Attachment not found: {attachment_id}")
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        if not attachment.file_data:
+            logger.error(f"Attachment {attachment_id} has no file data")
+            raise HTTPException(status_code=404, detail="Attachment file data not found")
+            
+        logger.info(f"Successfully retrieved attachment: {attachment.filename} ({attachment.content_type})")
+        return Response(
+            content=attachment.file_data,
+            media_type=attachment.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{attachment.filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving attachment {attachment_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/debug/log")
 async def debug_log(data: dict = Body(...)):

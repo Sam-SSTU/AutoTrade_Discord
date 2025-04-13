@@ -65,6 +65,48 @@ class MessageHandler:
             content = message_data.get('content', '')
             author = message_data.get('author', {})
             username = f"{author.get('username')}#{author.get('discriminator')}"
+            channel_id = str(message_data.get('channel_id'))
+            
+            # 获取频道信息
+            channel = self._db.query(Channel).filter(
+                Channel.platform_channel_id == channel_id
+            ).first()
+            
+            # 如果是新的论坛帖子，需要先创建或更新帖子记录
+            if message_data.get('thread'):
+                thread_data = message_data['thread']
+                thread_id = str(thread_data.get('id'))
+                thread_name = thread_data.get('name', '未知帖子')
+                parent_id = str(thread_data.get('parent_id'))
+                
+                # 查找父级论坛频道
+                parent_channel = self._db.query(Channel).filter(
+                    Channel.platform_channel_id == parent_id
+                ).first()
+                
+                if parent_channel:
+                    # 创建或更新帖子记录
+                    thread = self._db.query(Channel).filter(
+                        Channel.platform_channel_id == thread_id
+                    ).first()
+                    
+                    if not thread:
+                        thread = Channel(
+                            platform_channel_id=thread_id,
+                            name=thread_name,
+                            guild_id=parent_channel.guild_id,
+                            guild_name=parent_channel.guild_name,
+                            type=11,  # Discord 帖子类型
+                            parent_id=parent_id,
+                            is_active=True,
+                            position=0
+                        )
+                        self._db.add(thread)
+                        self._db.commit()
+                        message_logger.info(f"创建新帖子: {thread_name}")
+                    
+                    # 更新 channel 为新创建的帖子
+                    channel = thread
             
             # 简化的日志输出
             message_logger.info(f"{username}发了消息: {content or '[空消息]'}")
@@ -74,10 +116,6 @@ class MessageHandler:
             self._db.commit()
             
             # Increment unread count
-            channel = self._db.query(Channel).filter(
-                Channel.platform_channel_id == str(message_data.get('channel_id'))
-            ).first()
-            
             if channel:
                 unread = self._db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
                 if unread:
@@ -90,17 +128,18 @@ class MessageHandler:
                     self._db.add(unread)
                 self._db.commit()
             
-            return {
-                'type': 'new_message',
-                'channel_id': channel.platform_channel_id,
-                'channel_name': channel.name,
-                'author_name': username,
-                'content': content,
-                'created_at': datetime.now().isoformat()
-            }
+                return {
+                    'type': 'new_message',
+                    'channel_id': channel.platform_channel_id,
+                    'channel_name': channel.name,
+                    'author_name': username,
+                    'content': content,
+                    'created_at': datetime.now().isoformat()
+                }
             
         except Exception as e:
             message_logger.error(f"处理消息出错: {str(e)}")
+            message_logger.error(traceback.format_exc())
             self._db.rollback()
             raise
 

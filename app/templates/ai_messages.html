@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Messages</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <div class="header-left">
+                <h1>AI Messages</h1>
+                <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
+                    <i class="el-icon-connection"></i>
+                    <span v-text="isConnected ? '已连接' : '未连接'"></span>
+                </div>
+            </div>
+            <div class="header-right">
+                <a href="/" class="btn btn-outline-primary">返回频道列表</a>
+            </div>
+        </div>
+
+        <div class="container-fluid">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">转发的消息</h5>
+                        <button class="btn btn-outline-secondary btn-sm" @click="clearMessages">
+                            <i class="el-icon-delete"></i>
+                            清空消息
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body message-list" ref="messageList">
+                    <div v-for="message in messages" :key="message.id" class="message-item">
+                        <div class="message-header">
+                            <div class="message-info">
+                                <span class="channel-name">[{% raw %}{{ message.channel_name }}{% endraw %}]</span>
+                                <span class="time">{% raw %}{{ formatDate(message.created_at) }}{% endraw %} (本地)</span>
+                                <span class="time">{% raw %}{{ formatUTCDate(message.created_at) }}{% endraw %}</span>
+                                <span class="original-time" v-if="message.showDetails">(原始: {% raw %}{{ message.created_at }}{% endraw %})</span>
+                            </div>
+                        </div>
+                        <div class="message-content">
+                            <div class="text-content" v-if="message.content">{% raw %}{{ message.content }}{% endraw %}</div>
+                            <div class="referenced-content" v-if="message.referenced_content">
+                                <div class="quote-box">
+                                    {% raw %}{{ message.referenced_content }}{% endraw %}
+                                </div>
+                            </div>
+                            <div v-if="message.attachments && message.attachments.length > 0" class="attachments">
+                                <div v-for="attachment in message.attachments" :key="attachment.id" class="attachment">
+                                    <img :src="attachment.url"
+                                         :alt="attachment.filename"
+                                         class="attachment-image"
+                                         @click="showImagePreview(attachment)">
+                                </div>
+                            </div>
+                            <div class="message-details">
+                                <el-button type="text" size="small" @click="message.showDetails = !message.showDetails"
+                                    v-text="message.showDetails ? '隐藏详情' : '显示详情'">
+                                </el-button>
+                                <div v-show="message.showDetails" class="details-content">
+                                    <pre>{% raw %}{{ JSON.stringify(message, null, 2) }}{% endraw %}</pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="messages.length === 0" class="text-center text-muted mt-4">
+                        暂无转发消息
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <el-dialog :visible.sync="imagePreviewVisible" :append-to-body="true" class="image-preview-dialog">
+            <img :src="previewImageUrl" class="preview-image" alt="Preview" />
+        </el-dialog>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                messages: [],
+                isConnected: false,
+                ws: null,
+                imagePreviewVisible: false,
+                previewImageUrl: ''
+            },
+            methods: {
+                setupWebSocket() {
+                    this.ws = new WebSocket(`ws://${window.location.host}/ws/ai`);
+                    
+                    this.ws.onopen = () => {
+                        this.isConnected = true;
+                        this.$notify({
+                            title: '连接成功',
+                            message: '已连接到服务器',
+                            type: 'success',
+                            duration: 2000
+                        });
+                    };
+                    
+                    this.ws.onclose = () => {
+                        this.isConnected = false;
+                        setTimeout(() => this.setupWebSocket(), 5000);
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        const message = JSON.parse(event.data);
+                        message.showDetails = false;
+                        this.messages.unshift(message);
+                    };
+                },
+                formatDate(dateString) {
+                    const date = new Date(dateString);
+                    // 本地时间
+                    const localTime = date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                    return localTime;
+                },
+                formatUTCDate(dateString) {
+                    const date = new Date(dateString);
+                    // UTC时间
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: 'UTC'
+                    }) + ' UTC';
+                },
+                showImagePreview(attachment) {
+                    this.previewImageUrl = attachment.url;
+                    this.imagePreviewVisible = true;
+                },
+                clearMessages() {
+                    if (confirm('确定要清空所有消息吗？')) {
+                        this.messages = [];
+                    }
+                }
+            },
+            created() {
+                this.setupWebSocket();
+            },
+            beforeDestroy() {
+                if (this.ws) {
+                    this.ws.close();
+                }
+            }
+        });
+    </script>
+
+    <style>
+    .message-item {
+        margin-bottom: 1rem;
+        padding: 1rem;
+        border: 1px solid #e4e7ed;
+        border-radius: 4px;
+    }
+
+    .message-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+    }
+
+    .message-info {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .channel-name {
+        color: #409EFF;
+        font-weight: 500;
+    }
+
+    .time {
+        color: #909399;
+        font-size: 0.9em;
+    }
+
+    .text-content {
+        margin-bottom: 0.5rem;
+        white-space: pre-wrap;
+    }
+
+    .quote-box {
+        background-color: #f5f7fa;
+        border-left: 4px solid #dcdfe6;
+        padding: 0.5rem;
+        margin: 0.5rem 0;
+        color: #606266;
+    }
+
+    .attachments {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 0.5rem;
+    }
+
+    .attachment-image {
+        max-width: 200px;
+        max-height: 200px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .attachment-image:hover {
+        transform: scale(1.05);
+    }
+
+    .message-list {
+        max-height: calc(100vh - 200px);
+        overflow-y: auto;
+    }
+
+    .image-preview-dialog {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .preview-image {
+        max-width: 90vw;
+        max-height: 90vh;
+        object-fit: contain;
+    }
+
+    .connection-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-left: 12px;
+    }
+
+    .connection-status.connected {
+        background-color: #f0f9eb;
+        color: #67c23a;
+    }
+
+    .connection-status.disconnected {
+        background-color: #fef0f0;
+        color: #f56c6c;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        background-color: #fff;
+        border-bottom: 1px solid #e4e7ed;
+    }
+
+    .header-left {
+        display: flex;
+        align-items: center;
+    }
+
+    .header-left h1 {
+        margin: 0;
+        font-size: 1.5rem;
+    }
+
+    .message-details {
+        margin-top: 1rem;
+        border-top: 1px solid #ebeef5;
+        padding-top: 0.5rem;
+    }
+
+    .details-content {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 0.5rem;
+        overflow-x: auto;
+    }
+
+    .details-content pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .original-time {
+        color: #909399;
+        font-size: 0.8em;
+        font-family: monospace;
+    }
+    </style>
+</body>
+</html> 
