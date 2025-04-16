@@ -2,8 +2,7 @@
 
 # Refractor Version Still building. 持续开发中
 
-
-一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。
+一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。用于AI自动交易
 
 ## 功能特点
 
@@ -13,7 +12,8 @@
 - 开发者模式，支持更多高级功能
 - 支持消息附件和嵌入内容的显示
 - 实时日志查看
-
+- 用于AI自动交易
+  
 ## 系统要求
 
 - Python 3.8+
@@ -191,6 +191,5 @@ alembic downgrade -1
 ## 许可证
 
 [Your License] 
-
 
 emoji from: https://favicon.io/emoji-favicons/thinking-face
