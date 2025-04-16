@@ -1,6 +1,6 @@
 # Discord Message Manager
 
-# Refractor Version Still building. 持续开发中
+# Still building. 持续开发中
 
 一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。用于AI自动交易
 
@@ -191,5 +191,3 @@ alembic downgrade -1
 ## 许可证
 
 [Your License] 
-
-emoji from: https://favicon.io/emoji-favicons/thinking-face
