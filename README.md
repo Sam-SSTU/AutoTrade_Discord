@@ -1,196 +1,196 @@
-# Discord Message Manager
+# 量化与KOL消息源的虚拟币交易系统
 
-# Refractor Version Still building. 持续开发中
+基于Python的自动化虚拟币交易系统，结合社交媒体KOL消息分析和量化交易策略，实现智能化交易决策。系统从Discord频道捕获消息，将其存储在数据库中，并提供Web界面来查看和管理这些消息。
 
+**注意：** 目前币安集成组件和AI分析组件仍在开发中。
 
-一个用于监控和管理 Discord 消息的 Web 应用程序。支持实时消息监听、历史消息同步、频道管理等功能。
+## 🌟 核心功能
 
-## 功能特点
-
-- 实时监控 Discord 消息
-- 支持查看和管理多个频道
+### 社交媒体监控
+- Discord频道和论坛帖子实时监控
 - 消息历史记录和同步
-- 开发者模式，支持更多高级功能
-- 支持消息附件和嵌入内容的显示
-- 实时日志查看
+- 未读消息追踪
+- 附件和嵌入内容支持
 
-## 系统要求
+### 消息分析（开发中）
+- KOL消息智能分类
+- 交易信号提取
+- 市场情绪分析
+- 多维度数据整合
+
+### 交易执行系统（开发中）
+- 币安API集成
+- 自动化交易执行
+- 风险控制管理
+- 订单跟踪与管理
+
+### 系统监控
+- 实时WebSocket连接状态
+- 数据库连接监控
+- API健康检查
+- 消息同步状态监控
+
+## 🛠️ 技术架构
+
+### 后端技术栈
+- **Web框架**: FastAPI v0.104.1
+- **ASGI服务器**: Uvicorn v0.24.0
+- **数据库**: PostgreSQL 12+
+- **ORM**: SQLAlchemy v2.0.23
+- **缓存**: Redis v5.0.1
+- **Discord SDK**: discord.py v2.3.2
+
+### 前端技术栈
+- **框架**: Vue.js v2.6.14
+- **UI组件**: Element UI
+- **样式**: Bootstrap v5.1.3
+- **HTTP客户端**: Axios
+
+## 📋 系统要求
 
 - Python 3.8+
 - PostgreSQL 12+
-- Node.js 14+ (用于前端开发，可选)
+- Redis 6+
+- Node.js 14+
 
-## 安装步骤
+## 🚀 快速开始
 
-### 1. 克隆项目
+### 1. 环境准备
 
 ```bash
+# 克隆项目
 git clone [your-repository-url]
 cd AutoTrade_Discord
-```
 
-### 2. 创建虚拟环境
-
-```bash
+# 创建虚拟环境
 python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+source venv/bin/activate  # Linux/macOS
+# 或
+venv\Scripts\activate  # Windows
 ```
 
-### 3. 安装依赖
+### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. 设置数据库
+### 3. 配置文件
 
-1. 安装 PostgreSQL（如果尚未安装）
-   - Windows: 从 [PostgreSQL 官网](https://www.postgresql.org/download/windows/) 下载安装包
-   - macOS: 使用 Homebrew 安装
-     ```bash
-     brew install postgresql
-     ```
-   - Linux:
-     ```bash
-     sudo apt-get update
-     sudo apt-get install postgresql postgresql-contrib
-     ```
+创建 `.env` 文件并配置以下参数：
+```env
+# 数据库配置
+DATABASE_URL=postgresql://user:password@localhost/dbname
 
-2. 创建数据库和用户
-   ```sql
-   CREATE DATABASE discord_manager;
-   CREATE USER discord_user WITH PASSWORD 'your_password';
-   GRANT ALL PRIVILEGES ON DATABASE discord_manager TO discord_user;
-   ```
+# Discord配置
+DISCORD_USER_TOKEN=your_discord_token
 
-3. 配置数据库连接
-   创建 `.env` 文件并添加以下内容：
-   ```
-   DATABASE_URL=postgresql://discord_user:your_password@localhost/discord_manager
-   DISCORD_USER_TOKEN=your_discord_token
-   ```
+# Redis配置
+REDIS_URL=redis://localhost:6379
 
-4. 初始化数据库
-   ```bash
-   # 运行数据库迁移
-   alembic upgrade head
-   ```
+# Telegram日志配置（可选）
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
 
-### 5. 获取 Discord Token
-
-1. 打开 Discord Web 版
-2. 按 F12 打开开发者工具
-3. 在 Network 标签页中找到任意请求
-4. 在请求头中找到 `Authorization` 字段的值
-5. 将该值添加到 `.env` 文件的 `DISCORD_USER_TOKEN` 中
-
-### 6. 运行应用
+### 4. 初始化数据库
 
 ```bash
-# 启动应用
+# 运行数据库迁移
+alembic upgrade head
+
+# 重置数据库（如需要）
+python reset_db.py
+```
+
+### 5. 启动服务
+
+```bash
+# 启动主服务
 uvicorn app.main:app --reload
 
-
-```
-stop
+# 停止服务（如需要）
 kill -9 $(lsof -ti:8000)
+```
 
-refresh database
-python reset_db.py
+## 📊 系统功能
 
-访问 http://localhost:8000 即可打开应用。
-
-## 使用说明
-
-### 基本功能
-
+### Discord消息管理
 1. 频道管理
-   - 点击"同步频道列表"更新可访问的频道
-   - 使用搜索框快速查找频道
-   - 灰色显示的频道表示无访问权限
+   - 同步频道列表
+   - 激活/停用频道
+   - 论坛帖子同步
+   - 频道分类管理
 
-2. 消息查看
-   - 点击频道查看消息历史
-   - 支持无限滚动加载更多消息
-   - 支持查看消息附件和嵌入内容
+2. 消息监控
+   - 实时消息捕获
+   - 历史消息同步
+   - 附件处理
+   - 未读消息追踪
 
-### 开发者模式
+3. 开发者工具
+   - 系统日志查看
+   - 消息日志查看
+   - 数据库操作
+   - WebSocket状态监控
 
-点击右上角的"开发者模式"按钮启用以下功能：
+## 🔒 安全建议
 
-1. 历史消息同步
-   - 输入要同步的消息数量
-   - 点击"Sync"开始同步
+1. API安全
+   - Discord Token安全存储
+   - 环境变量管理
+   - API访问控制
 
-2. 数据库操作
-   - 使用"Clear All Messages"清空数据库
+2. 数据安全
+   - 数据库备份
+   - 敏感信息加密
+   - 访问权限控制
 
-3. 日志查看
-   - System Logs: 显示系统运行日志
-   - Message Logs: 显示消息相关的日志
+3. 系统安全
+   - 依赖包更新
+   - 日志审计
+   - 错误处理
 
-## 常见问题
-
-1. 数据库连接错误
-   - 检查 PostgreSQL 服务是否正在运行
-   - 验证数据库连接字符串是否正确
-   - 确认数据库用户权限是否正确
-
-2. Discord Token 无效
-   - 确保 token 未过期
-   - 验证 token 格式是否正确
-   - 检查是否有必要的 Discord 权限
-
-3. 消息不显示
-   - 检查频道权限设置
-   - 确认 WebSocket 连接状态
-   - 查看浏览器控制台是否有错误信息
-
-## 开发说明
-
-### 项目结构
+## 📁 项目结构
 
 ```
-app/
-├── api/            # API 路由
-├── models/         # 数据库模型
-├── services/       # 业务逻辑
-├── templates/      # 前端模板
-└── main.py         # 应用入口
-
-alembic/           # 数据库迁移
-requirements.txt   # Python 依赖
-```
- 
-### 数据库迁移
-
-添加新的数据库变更：
-```bash
-alembic revision -m "description"
-```
-
-应用迁移：
-```bash
-alembic upgrade head
+/
+├── alembic/           # 数据库迁移脚本
+├── app/               # 主应用程序代码
+│   ├── ai/           # AI组件（开发中）
+│   ├── api/          # API端点
+│   ├── binance/      # 币安集成（开发中）
+│   ├── config/       # 应用程序配置
+│   ├── models/       # 数据库模型
+│   ├── services/     # 业务逻辑服务
+│   ├── static/       # 静态资源
+│   ├── templates/    # HTML模板
+│   └── utils/        # 工具函数
+├── data/             # 数据存储
+├── docs/             # 文档
+├── examples/         # 示例代码
+└── storage/          # 文件存储
 ```
 
-回滚迁移：
-```bash
-alembic downgrade -1
-```
+## 📈 开发计划
 
-## 安全注意事项
+1. AI组件实现
+   - 消息分析系统
+   - 交易信号提取
+   - 市场情绪分析
 
-1. 请勿泄露你的 Discord Token
-2. 定期更新依赖包以修复安全漏洞
-3. 在生产环境中使用更安全的配置
+2. 币安集成
+   - API连接实现
+   - 交易执行系统
+   - 风险控制模块
 
-## 许可证
+3. 系统优化
+   - 错误处理增强
+   - 日志系统完善
+   - 性能优化
 
-[Your License] 
+## 📄 许可证
 
+MIT License
 
 emoji from: https://favicon.io/emoji-favicons/thinking-face
