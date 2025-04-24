@@ -3,6 +3,8 @@
 基于Python的自动化交易系统，结合社交媒体KOL消息分析和量化交易策略，实现智能化交易决策。系统从Discord频道捕获消息，将其存储在数据库中，并提供Web界面来查看和管理这些消息。
 
 **注意：** 目前币A集成组件和AI分析组件仍在开发中。
+<img width="1512" alt="SCR-20250424-kyeg" src="https://github.com/user-attachments/assets/9d6f297e-b11e-4943-9572-d1e651702025" />
+<img width="1506" alt="SCR-20250424-kykb" src="https://github.com/user-attachments/assets/bc76e873-cec6-4fc0-b8b1-55886ed74a72" />
 
 ## 🌟 核心功能
 
