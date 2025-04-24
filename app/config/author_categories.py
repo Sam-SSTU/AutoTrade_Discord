@@ -1,15 +1,19 @@
 from typing import Dict, List
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 监听的频道配置
 MONITORED_CHANNELS: List[str] = [
-    "1004716337219764274",  # 示例频道ID
-    "1004710056127889509"   # 示例频道ID
+    os.getenv("MONITORED_CHANNEL_NEWS"),      # 新闻频道
+    os.getenv("MONITORED_CHANNEL_DISCUSSION") # 讨论频道
 ]
 
 # 频道分类映射
 CHANNEL_CATEGORIES: Dict[str, str] = {
-    "1004716337219764274": "news",
-    "1004710056127889509": "discussion"
+    os.getenv("MONITORED_CHANNEL_NEWS"): "news",
+    os.getenv("MONITORED_CHANNEL_DISCUSSION"): "discussion"
 }
 
 def is_monitored_channel(channel_id: str) -> bool:
