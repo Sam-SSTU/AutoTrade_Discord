@@ -11,6 +11,14 @@ import asyncio
 from datetime import datetime
 import os
 
+# Apply proxy patch for HTTPS-over-HTTPS support
+from .utils.proxy_patch import apply_proxy_patch
+apply_proxy_patch()
+
+# Configure improved logging
+from .utils.logging_config import configure_logging, register_websocket, unregister_websocket
+logger = configure_logging()
+
 from .models.base import Base
 from .database import engine
 from .services.message_handler import MessageHandler
@@ -18,10 +26,6 @@ from .services.discord_client import DiscordClient
 from .api import messages, channels
 from . import routes
 from .ai import ai_message_handler
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -92,16 +96,45 @@ async def health_check():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    discord_client.register_websocket(websocket)
+    
     try:
+        # Register with Discord client
+        discord_client.register_websocket(websocket)
+        
+        # Register with logging system and add log sending method
+        register_websocket(websocket)
+        
+        # Add method to send log messages
+        async def send_log_message(message):
+            try:
+                if websocket.client_state != 'DISCONNECTED':
+                    await websocket.send_text(message)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to send log to websocket: {str(e)}")
+                return False
+        
+        # Attach the method to the websocket object
+        websocket._send_log_message = send_log_message
+        
+        # Send a welcome message
+        await websocket.send_text(json.dumps({
+            "type": "connection", 
+            "status": "connected",
+            "message": "WebSocket connection established"
+        }))
+        
         while True:
             # Keep the connection alive
             await websocket.receive_text()
     except WebSocketDisconnect:
-        discord_client.unregister_websocket(websocket)
+        logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
+    finally:
+        # Always ensure cleanup in all cases
         discord_client.unregister_websocket(websocket)
+        unregister_websocket(websocket)
 
 @app.websocket("/ws/ai")
 async def websocket_ai_endpoint(websocket: WebSocket):

@@ -213,17 +213,6 @@
             font-size: 1.2em;
             color: #6c757d;
         }
-        .log-container {
-            max-height: 300px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-        .log-entry {
-            padding: 4px;
-            border-bottom: 1px solid #f0f0f0;
-            white-space: pre-wrap;
-        }
         .connection-status {
             margin-left: 15px;
             display: flex;
@@ -601,44 +590,8 @@
 
         <!-- 开发者模式面板 -->
         <div v-if="devMode" class="row mt-4">
-            <!-- 系统日志 -->
-            <div class="col-md-3">
-                <div class="card">
-                    <div class="card-header">
-                        System Logs
-                        <button class="btn btn-sm btn-secondary float-end" @click="clearSystemLogs">Clear</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="log-container" ref="systemLogContainer">
-                            <div v-for="(log, index) in systemLogs" :key="index" class="log-entry">
-                                {{ log }}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 消息日志 -->
-            <div class="col-md-6">
-                <div class="card">
-                    <div class="card-header">
-                        Message Logs
-                        <button class="btn btn-sm btn-secondary float-end" @click="clearMessageLogs">Clear</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="log-container" ref="messageLogContainer">
-                            <div v-for="(log, index) in messageLogs" :key="index" class="log-entry">
-                                <span class="badge bg-primary me-2">{{ log.channel }}</span>
-                                <span class="badge bg-secondary me-2">{{ log.author }}</span>
-                                {{ log.content }}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- 开发者工具 -->
-            <div class="col-md-3">
+            <div class="col-md-12">
                 <div class="card">
                     <div class="card-header">
                         Developer Tools
@@ -723,8 +676,6 @@
                 unreadCounts: {},
                 lastMessageTimes: {},
                 messageCheckInterval: null,
-                systemLogs: [],
-                messageLogs: [],
                 searchQuery: '',
                 ws: null,
                 currentPage: 1,
@@ -869,7 +820,6 @@
                     
                     // 当滚动到底部时加载更多历史消息
                     if (this.hasMore && !this.loading && scrollTop + clientHeight >= scrollHeight - 50) {
-                        console.log('Loading more messages...');
                         await this.loadMessages(this.selectedChannel, true);
                     }
                 },
@@ -964,13 +914,8 @@
                 async loadChannels() {
                     try {
                         const url = '/api/channels' + (this.devMode ? '?include_inactive=true' : '');
-                        console.log('Loading channels from:', url);
-                        
                         const response = await fetch(url);
-                        console.log('Response status:', response.status);
-                        
                         const data = await response.json();
-                        console.log('Received channels data:', data);
                         
                         if (response.ok) {
                             if (!Array.isArray(data)) {
@@ -986,14 +931,6 @@
                             const nonCategoryChannels = data.filter(c => c.type !== 4);
                             const forwardingCount = nonCategoryChannels.filter(c => c.is_forwarding).length;
                             const nonForwardingCount = nonCategoryChannels.length - forwardingCount;
-                            
-                            console.log(`Loaded ${nonCategoryChannels.length} channels (${forwardingCount} forwarding, ${nonForwardingCount} non-forwarding)`);
-                            
-                            this.addMessageLog({
-                                channel: 'System',
-                                author: 'System',
-                                content: `已加载 ${nonCategoryChannels.length} 个频道 (${forwardingCount} 个转发中, ${nonForwardingCount} 个未转发)`
-                            });
                             
                             // 初始化每个频道的最后消息时间
                             data.forEach(channel => {
@@ -1012,11 +949,9 @@
                             throw new Error(`Server returned ${response.status}: ${data.detail || 'Unknown error'}`);
                         }
                     } catch (error) {
-                        console.error('Error loading channels:', error);
-                        this.addMessageLog({
-                            channel: 'System',
-                            author: 'System',
-                            content: '加载频道失败: ' + error.message
+                        this.$notify.error({
+                            title: '错误',
+                            message: '加载频道失败: ' + error.message
                         });
                     }
                 },
@@ -1161,7 +1096,6 @@
                         spinner: 'el-icon-loading',
                         background: 'rgba(0, 0, 0, 0.7)'
                     });
-
                     try {
                         const response = await fetch('/api/messages/clear-all', {
                             method: 'POST'
@@ -1178,9 +1112,6 @@
                             // 重置未读消息计数
                             this.unreadCounts = {};
                             
-                            // 清空所有消息日志
-                            this.messageLogs = [];
-                            
                             // 重置所有频道的最后消息时间
                             this.lastMessageTimes = {};
                             
@@ -1191,12 +1122,6 @@
                                 duration: 3000
                             });
                             
-                            this.addMessageLog({
-                                channel: 'Developer',
-                                author: 'System',
-                                content: `成功删除 ${result.deleted_messages} 条消息和 ${result.deleted_attachments} 个附件`
-                            });
-                            
                             // 如果当前有选中的频道，重新加载该频道
                             if (this.selectedChannel) {
                                 await this.loadMessages(this.selectedChannel);
@@ -1205,17 +1130,10 @@
                             throw new Error('清除数据库失败');
                         }
                     } catch (error) {
-                        console.error('Error clearing database:', error);
                         this.$notify.error({
                             title: '错误',
                             message: '清除消息失败: ' + error.message,
                             duration: 3000
-                        });
-                        
-                        this.addMessageLog({
-                            channel: 'Developer',
-                            author: 'System',
-                            content: '清除消息失败: ' + error.message
                         });
                     } finally {
                         // 关闭加载中对话框
@@ -1417,13 +1335,11 @@
                         };
                         
                         this.ws.onerror = (error) => {
-                            console.error('WebSocket error:', error);
                             this.isConnected = false;
                         };
                         
                         this.ws.onmessage = this.handleWebSocketMessage;
                     } catch (error) {
-                        console.error('Setup WebSocket error:', error);
                         this.isConnected = false;
                         setTimeout(this.setupWebSocket, 5000);
                     }
@@ -1445,7 +1361,6 @@
                             }
                         } catch (error) {
                             this.isConnected = false;
-                            console.error('Ping error:', error);
                         }
                     }, 5000);
                 },
@@ -1474,13 +1389,16 @@
                     }
                 },
                 async resetChannels() {
+                    this.addSystemLog('开始重置频道');
                     try {
                         const response = await fetch('/api/channels/reset', { method: 'POST' });
                         if (!response.ok) {
                             throw new Error('重置频道失败');
                         }
+                        this.addSystemLog('重置频道成功，请点击同步按钮更新频道列表');
                         alert('重置成功，请点击同步按钮更新频道列表');
                     } catch (error) {
+                        this.addSystemLog('重置频道失败: ' + error.message);
                         console.error('重置频道失败:', error);
                         alert('重置频道失败');
                     }
@@ -1524,7 +1442,6 @@
                             duration: 2000
                         });
                     } catch (error) {
-                        console.error('Error deleting message:', error);
                         this.$notify.error({
                             title: '错误',
                             message: '删除消息失败: ' + error.message,
@@ -1535,7 +1452,6 @@
                 async toggleForwarding(channel) {
                     const newValue = !channel.is_forwarding;
                     channel.is_forwarding = newValue;  // 立即更新UI
-                    
                     try {
                         const response = await fetch(`/api/channels/${channel.platform_channel_id}/forwarding`, {
                             method: 'POST',
@@ -1546,11 +1462,9 @@
                                 is_forwarding: newValue
                             })
                         });
-                        
                         if (!response.ok) {
                             throw new Error('更新失败');
                         }
-                        
                         this.$notify({
                             title: '成功',
                             message: `已${newValue ? '开启' : '关闭'}转发`,
@@ -1558,7 +1472,6 @@
                             duration: 2000
                         });
                     } catch (error) {
-                        console.error('Error toggling channel forwarding:', error);
                         channel.is_forwarding = !newValue;  // 恢复原来的状态
                         this.$notify.error({
                             title: '错误',
