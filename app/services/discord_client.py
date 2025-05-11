@@ -34,7 +34,22 @@ class DiscordClient:
         self.file_handler = FileHandler()
         self.connected_websockets = set()
         
-        message_logger.info("Discord客户端已初始化")
+        # 从环境变量读取代理配置
+        self.http_proxy = os.getenv("HTTP_PROXY")
+        self.https_proxy = os.getenv("HTTPS_PROXY")
+        
+        if self.http_proxy and self.https_proxy:
+            message_logger.info("Discord客户端已初始化，使用代理配置")
+            message_logger.debug(f"[配置] HTTP代理: {self.http_proxy}")
+            message_logger.debug(f"[配置] HTTPS代理: {self.https_proxy}")
+        else:
+            message_logger.info("Discord客户端已初始化，未使用代理")
+        
+    def _get_proxy_for_url(self, url: str) -> str:
+        """根据URL选择合适的代理"""
+        if url.startswith('https://') or url.startswith('wss://'):
+            return self.https_proxy
+        return self.http_proxy
         
     async def _create_session(self):
         """创建 HTTP 会话"""
@@ -62,12 +77,8 @@ class DiscordClient:
                 message_logger.debug("[会话] 准备创建aiohttp会话")
                 
                 # 设置更合理的超时时间，避免请求卡住
-                timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_connect=10, sock_read=10)
-                message_logger.debug(f"[会话] 配置超时参数: 总超时=30秒, 连接超时=10秒")
-                
-                # 配置代理
-                proxy = os.getenv("HTTP_PROXY", "http://127.0.0.1:7890")  # Use fallback if not set
-                message_logger.debug(f"[会话] 配置代理: {proxy}")
+                timeout = aiohttp.ClientTimeout(total=60, connect=20, sock_connect=20, sock_read=20)
+                message_logger.debug(f"[会话] 配置超时参数: 总超时=60秒, 连接超时=20秒")
                 
                 try:
                     # 尝试明确关闭之前的会话（如果存在）
@@ -84,18 +95,16 @@ class DiscordClient:
                     # 创建新会话
                     self.session = aiohttp.ClientSession(
                         headers={
-                            'Authorization': self._token,  # 直接使用token，不需要加Bot前缀
+                            'Authorization': self._token,
                             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                             'Content-Type': 'application/json'
                         },
-                        timeout=timeout,
+                        timeout=timeout
                     )
-                    # 保存代理设置为实例变量以便在请求中使用
-                    self.proxy = proxy
                     message_logger.info("[会话] HTTP会话创建成功")
                 except Exception as e:
                     message_logger.error(f"[会话] 创建ClientSession对象失败: {str(e)}")
-                    message_logger.debug(f"[会话] 异常详情: {traceback.format_exc()}")
+                    message_logger.debug(f"[会话错误详情] {traceback.format_exc()}")
                     raise
             else:
                 message_logger.debug("[会话] 使用现有HTTP会话")
@@ -105,12 +114,8 @@ class DiscordClient:
                     # 重置会话并递归调用
                     self.session = None
                     await self._create_session()
-        except aiohttp.ClientError as e:
-            message_logger.error(f"[严重错误] 创建HTTP会话失败 - aiohttp错误: {str(e)}")
-            message_logger.debug(f"[会话错误详情] {traceback.format_exc()}")
-            raise
         except Exception as e:
-            message_logger.error(f"[严重错误] 创建HTTP会话失败 - 未知错误: {str(e)}")
+            message_logger.error(f"[严重错误] 创建HTTP会话失败: {str(e)}")
             message_logger.debug(f"[会话错误详情] {traceback.format_exc()}")
             raise
         
@@ -178,75 +183,100 @@ class DiscordClient:
         self.message_callback = callback
         self._running = True
         heartbeat_task = None
+        retry_count = 0
+        max_retries = 3
         
-        try:
-            await self._create_session()
-            
-            async with self.session.ws_connect(
-                'wss://gateway.discord.gg/?v=9&encoding=json',
-                heartbeat=self._heartbeat_interval,
-                proxy=self.proxy
-            ) as self.ws:
-                # 启动心跳
-                heartbeat_task = asyncio.create_task(self._heartbeat())
+        while retry_count < max_retries:
+            try:
+                await self._create_session()
                 
-                # 发送身份验证
-                await self._identify()
+                # 使用更长的超时时间
+                timeout = aiohttp.ClientTimeout(total=60)
                 
-                async for msg in self.ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = json.loads(msg.data)
-                        op = data.get('op')
-                        
-                        if op == 10:  # Hello
-                            self._heartbeat_interval = data['d']['heartbeat_interval']
-                        elif op == 0:  # Dispatch
-                            self._last_sequence = data.get('s')
-                            event_type = data.get('t')
+                # 获取WebSocket URL的代理
+                ws_url = 'wss://gateway.discord.gg/?v=9&encoding=json'
+                ws_proxy = self._get_proxy_for_url(ws_url)
+                if ws_proxy:
+                    message_logger.info(f"[WebSocket] 使用代理连接Discord: {ws_proxy}")
+                else:
+                    message_logger.warning("[WebSocket] 未配置HTTPS代理，尝试直接连接")
+                
+                async with self.session.ws_connect(
+                    ws_url,
+                    heartbeat=self._heartbeat_interval,
+                    proxy=ws_proxy,
+                    timeout=timeout,
+                    ssl=True
+                ) as self.ws:
+                    # 重置重试计数
+                    retry_count = 0
+                    
+                    # 启动心跳
+                    heartbeat_task = asyncio.create_task(self._heartbeat())
+                    
+                    # 发送身份验证
+                    await self._identify()
+                    
+                    async for msg in self.ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            op = data.get('op')
                             
-                            if event_type == 'MESSAGE_CREATE':
-                                event_data = data.get('d')
-                                try:
-                                    if not event_data:
-                                        message_logger.error("消息数据为空")
-                                        return
-                                    
-                                    await self.message_callback(event_data)
-                                except Exception as e:
-                                    message_logger.error(f"消息处理错误: {str(e)}")
-                                    message_logger.debug(traceback.format_exc())
-                    elif msg.type == aiohttp.WSMsgType.CLOSED:
-                        message_logger.error(f"WebSocket连接关闭: 状态码={msg.data}, 原因={msg.extra}")
-                        break
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        message_logger.error(f"WebSocket连接错误: {msg.data}")
-                        break
-                        
-        except aiohttp.ClientConnectorError as e:
-            message_logger.error(f"WebSocket连接错误: 无法连接到Discord服务器 - {str(e)}")
-            message_logger.error(traceback.format_exc())
-            raise
-        except asyncio.TimeoutError:
-            message_logger.error("WebSocket连接超时")
-            message_logger.error(traceback.format_exc())
-            raise
-        except aiohttp.ClientError as e:
-            message_logger.error(f"WebSocket连接错误: aiohttp客户端错误 - {str(e)}")
-            message_logger.error(traceback.format_exc())
-            raise
-        except Exception as e:
-            message_logger.error(f"WebSocket连接错误: {str(e)}")
-            message_logger.error(traceback.format_exc())
-            raise
-        finally:
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
-            if self.session:
-                await self.session.close()
+                            if op == 10:  # Hello
+                                self._heartbeat_interval = data['d']['heartbeat_interval']
+                            elif op == 0:  # Dispatch
+                                self._last_sequence = data.get('s')
+                                event_type = data.get('t')
+                                
+                                if event_type == 'MESSAGE_CREATE':
+                                    event_data = data.get('d')
+                                    try:
+                                        if not event_data:
+                                            message_logger.error("消息数据为空")
+                                            return
+                                        
+                                        await self.message_callback(event_data)
+                                    except Exception as e:
+                                        message_logger.error(f"消息处理错误: {str(e)}")
+                                        message_logger.debug(traceback.format_exc())
+                        elif msg.type == aiohttp.WSMsgType.CLOSED:
+                            message_logger.error(f"WebSocket连接关闭: 状态码={msg.data}, 原因={msg.extra}")
+                            break
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            message_logger.error(f"WebSocket连接错误: {msg.data}")
+                            break
+                            
+            except aiohttp.ClientConnectorError as e:
+                message_logger.error(f"WebSocket连接错误: 无法连接到Discord服务器 - {str(e)}")
+                message_logger.error(traceback.format_exc())
+            except asyncio.TimeoutError:
+                message_logger.error("WebSocket连接超时")
+                message_logger.error(traceback.format_exc())
+            except aiohttp.ClientError as e:
+                message_logger.error(f"WebSocket连接错误: aiohttp客户端错误 - {str(e)}")
+                message_logger.error(traceback.format_exc())
+            except Exception as e:
+                message_logger.error(f"WebSocket连接错误: {str(e)}")
+                message_logger.error(traceback.format_exc())
+            finally:
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                retry_count += 1
+                if retry_count < max_retries:
+                    # 等待一段时间后重试
+                    await asyncio.sleep(5 * retry_count)  # 递增等待时间
+                    message_logger.info(f"尝试重新连接 (第 {retry_count} 次)")
+                else:
+                    message_logger.error("达到最大重试次数，停止重连")
+                    break
+                
+        if self.session:
+            await self.session.close()
                 
     async def close(self):
         """关闭客户端连接"""
@@ -273,7 +303,7 @@ class DiscordClient:
                 timeout = aiohttp.ClientTimeout(total=10)  # 设置10秒超时
                 message_logger.debug(f"[请求] 设置请求超时时间: 10秒")
                 
-                async with self.session.get(verification_url, timeout=timeout, proxy=self.proxy) as response:
+                async with self.session.get(verification_url, timeout=timeout, proxy=self._get_proxy_for_url(verification_url)) as response:
                     status_code = response.status
                     message_logger.debug(f"[响应] 验证token状态码: {status_code}")
                     
@@ -345,7 +375,7 @@ class DiscordClient:
         """获取频道信息"""
         try:
             await self._create_session()
-            async with self.session.get(f'https://discord.com/api/v9/channels/{channel_id}', proxy=self.proxy) as response:
+            async with self.session.get(f'https://discord.com/api/v9/channels/{channel_id}', proxy=self._get_proxy_for_url(f'https://discord.com/api/v9/channels/{channel_id}')) as response:
                 if response.status == 200:
                     data = await response.json()
                     message_logger.info(f"获取到频道信息: {data.get('name', '未知频道')}")
@@ -383,7 +413,7 @@ class DiscordClient:
                 
                 message_logger.debug(f"[请求] 获取论坛帖子: URL={url}, 参数={params}")
                 try:
-                    async with self.session.get(url, params=params, proxy=self.proxy) as response:
+                    async with self.session.get(url, params=params, proxy=self._get_proxy_for_url(url)) as response:
                         status_code = response.status
                         message_logger.debug(f"[响应] 获取论坛帖子状态码: {status_code}")
                         
@@ -450,7 +480,7 @@ class DiscordClient:
             
             message_logger.debug(f"[请求] 获取已归档帖子: URL={url}, 参数={params}")
             try:
-                async with self.session.get(url, params=params, proxy=self.proxy) as response:
+                async with self.session.get(url, params=params, proxy=self._get_proxy_for_url(url)) as response:
                     status_code = response.status
                     message_logger.debug(f"[响应] 获取已归档帖子状态码: {status_code}")
                     
@@ -533,7 +563,7 @@ class DiscordClient:
             message_logger.debug(f"[请求] 获取服务器列表: URL={guilds_url}")
             
             try:
-                async with self.session.get(guilds_url, proxy=self.proxy) as response:
+                async with self.session.get(guilds_url, proxy=self._get_proxy_for_url(guilds_url)) as response:
                     status_code = response.status
                     message_logger.debug(f"[响应] 获取服务器列表状态码: {status_code}")
                     
@@ -573,7 +603,7 @@ class DiscordClient:
                 message_logger.info(channel_list_msg)
                 
                 try:
-                    async with self.session.get(channels_url, proxy=self.proxy) as channels_response:
+                    async with self.session.get(channels_url, proxy=self._get_proxy_for_url(channels_url)) as channels_response:
                         status_code = channels_response.status
                         message_logger.debug(f"[响应] 获取服务器频道状态码: {status_code}")
                         
@@ -798,7 +828,7 @@ class DiscordClient:
             params = {'limit': 1}
             message_logger.debug(f"[请求] 权限检查: URL={url}, 参数={params}")
             
-            async with self.session.get(url, params=params, proxy=self.proxy) as response:
+            async with self.session.get(url, params=params, proxy=self._get_proxy_for_url(url)) as response:
                 status_code = response.status
                 message_logger.debug(f"[响应] 权限检查状态码: {status_code}")
                 
@@ -973,7 +1003,7 @@ class DiscordClient:
                 async with self.session.get(
                     f'https://discord.com/api/v9/channels/{channel_id}/messages',
                     params=params,
-                    proxy=self.proxy
+                    proxy=self._get_proxy_for_url(f'https://discord.com/api/v9/channels/{channel_id}/messages')
                 ) as response:
                     if response.status == 200:
                         messages = await response.json()
@@ -1007,7 +1037,7 @@ class DiscordClient:
         """获取服务器的所有频道"""
         try:
             await self._create_session()
-            async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels', proxy=self.proxy) as response:
+            async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}/channels', proxy=self._get_proxy_for_url(f'https://discord.com/api/v9/guilds/{guild_id}/channels')) as response:
                 if response.status == 200:
                     channels = await response.json()
                     message_logger.info(f"获取到{len(channels)}个服务器频道")
@@ -1023,7 +1053,7 @@ class DiscordClient:
         """获取服务器信息"""
         try:
             await self._create_session()
-            async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}', proxy=self.proxy) as response:
+            async with self.session.get(f'https://discord.com/api/v9/guilds/{guild_id}', proxy=self._get_proxy_for_url(f'https://discord.com/api/v9/guilds/{guild_id}')) as response:
                 if response.status == 200:
                     data = await response.json()
                     message_logger.info(f"获取到服务器信息: {data.get('name', '未知服务器')}")
@@ -1039,7 +1069,7 @@ class DiscordClient:
         """获取用户信息"""
         try:
             await self._create_session()
-            async with self.session.get(f'https://discord.com/api/v9/users/{user_id}', proxy=self.proxy) as response:
+            async with self.session.get(f'https://discord.com/api/v9/users/{user_id}', proxy=self._get_proxy_for_url(f'https://discord.com/api/v9/users/{user_id}')) as response:
                 if response.status == 200:
                     data = await response.json()
                     message_logger.info(f"获取到用户信息: {data.get('username', '未知用户')}")
@@ -1055,7 +1085,7 @@ class DiscordClient:
         """Store a message attachment in the database"""
         try:
             # Download the attachment
-            async with self.session.get(attachment_data['url'], proxy=self.proxy) as response:
+            async with self.session.get(attachment_data['url'], proxy=self._get_proxy_for_url(attachment_data['url'])) as response:
                 if response.status != 200:
                     message_logger.error(f"Failed to download attachment: {attachment_data['filename']}")
                     return
