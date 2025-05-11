@@ -39,14 +39,18 @@ class DiscordClient:
         self.https_proxy = os.getenv("HTTPS_PROXY")
         
         if self.http_proxy and self.https_proxy:
-            message_logger.info("Discord客户端已初始化，使用代理配置")
+            message_logger.info("Discord客户端已初始化，代理配置如下：")
             message_logger.debug(f"[配置] HTTP代理: {self.http_proxy}")
             message_logger.debug(f"[配置] HTTPS代理: {self.https_proxy}")
         else:
-            message_logger.info("Discord客户端已初始化，未使用代理")
+            message_logger.info("Discord客户端已初始化，未配置代理，将使用直接连接")
         
     def _get_proxy_for_url(self, url: str) -> str:
         """根据URL选择合适的代理"""
+        # 如果代理环境变量为空，返回None
+        if not self.http_proxy and not self.https_proxy:
+            return None
+            
         if url.startswith('https://') or url.startswith('wss://'):
             return self.https_proxy
         return self.http_proxy
@@ -121,19 +125,73 @@ class DiscordClient:
         
     async def _heartbeat(self):
         """发送心跳包"""
-        while self._running:
-            if self._heartbeat_interval:
-                payload = {
-                    'op': 1,
-                    'd': self._last_sequence
-                }
-                try:
-                    await self.ws.send_json(payload)
-                except Exception as e:
-                    message_logger.error(f"心跳包发送错误")
-                    break
-                await asyncio.sleep(self._heartbeat_interval / 1000)
+        # 简单直接的心跳实现，无复杂逻辑
+        try:
+            message_logger.info("[WebSocket] 启动心跳任务")
+            
+            # 无限循环发送心跳
+            while True:
+                # 检查连接状态
+                if not self._running or not self.ws or self.ws.closed:
+                    message_logger.debug("[WebSocket] 连接已关闭或不再运行，结束心跳任务")
+                    return
                 
+                # 如果心跳间隔未设置，等待后再检查
+                if not self._heartbeat_interval:
+                    await asyncio.sleep(1)
+                    continue
+                
+                try:
+                    # 发送心跳
+                    payload = {'op': 1, 'd': self._last_sequence}
+                    message_logger.debug(f"[WebSocket] 发送心跳 (序列号: {self._last_sequence})")
+                    message_logger.debug(f"[WebSocket] 心跳发送前连接状态: closed={self.ws.closed if self.ws else 'N/A'}")
+                    
+                    # 设置最后发送心跳的时间
+                    self.last_heartbeat_sent = asyncio.get_event_loop().time()
+                    
+                    # 发送消息
+                    await self.ws.send_json(payload)
+                    message_logger.debug(f"[WebSocket] 心跳已发送，当前时间戳: {self.last_heartbeat_sent}")
+                    
+                    # 关键变化：不等待整个心跳周期，只等待一个较短的时间
+                    # 然后立即发送一个新的心跳，以保持连接活跃
+                    # 计算等待时间 - 使用心跳间隔的一半时间 
+                    wait_time = min(self._heartbeat_interval / 1000 / 2, 15)  # 最多等待15秒
+                    message_logger.debug(f"[WebSocket] 将等待 {wait_time} 秒后继续")
+                    
+                    # 等待指定时间
+                    await asyncio.sleep(wait_time)
+                    
+                    # 检查是否收到了心跳确认
+                    current_time = asyncio.get_event_loop().time()
+                    time_since_heartbeat = current_time - self.last_heartbeat_sent
+                    message_logger.debug(f"[WebSocket] 距离上次心跳已过 {time_since_heartbeat:.1f} 秒")
+                    
+                except asyncio.CancelledError:
+                    # 任务被取消，直接退出
+                    raise
+                except Exception as e:
+                    # 任何其他错误，记录详细信息后继续尝试
+                    message_logger.error(f"[WebSocket] 心跳发送错误: {str(e)}")
+                    message_logger.error(f"[WebSocket] 心跳错误详情: {traceback.format_exc()}")
+                    
+                    # 如果连接已关闭，退出心跳
+                    if not self.ws or self.ws.closed:
+                        message_logger.debug("[WebSocket] 连接已关闭，退出心跳循环")
+                        break
+                    
+                    # 等待短暂时间后重试
+                    await asyncio.sleep(1)
+                    
+        except asyncio.CancelledError:
+            message_logger.debug("[WebSocket] 心跳任务被取消")
+        except Exception as e:
+            message_logger.error(f"[WebSocket] 心跳任务异常: {str(e)}")
+            message_logger.error(f"[WebSocket] 心跳任务异常详情: {traceback.format_exc()}")
+        finally:
+            message_logger.info("[WebSocket] 心跳任务结束")
+
     async def _identify(self):
         """发送身份验证信息"""
         payload = {
@@ -182,18 +240,39 @@ class DiscordClient:
         message_logger.info("开始监听Discord消息")
         self.message_callback = callback
         self._running = True
-        heartbeat_task = None
         retry_count = 0
-        max_retries = 3
+        max_retries = 20
+        retry_delay = 5
         
-        while retry_count < max_retries:
+        # 初始化心跳追踪变量
+        self.last_heartbeat_sent = 0
+        self.last_heartbeat_ack = 0
+        
+        # 主循环
+        while self._running:
+            # 用于每次连接尝试的心跳任务
+            heartbeat_task = None
+            activity_tasks = []
+            
             try:
+                # 检查最大重试次数
+                if retry_count >= max_retries:
+                    message_logger.warn(f"达到最大重试次数 ({max_retries})，等待60秒后重置计数")
+                    await asyncio.sleep(60)
+                    retry_count = 0
+                
+                # 创建会话
                 await self._create_session()
                 
-                # 使用更长的超时时间
-                timeout = aiohttp.ClientTimeout(total=60)
+                # 更宽松的超时设置
+                timeout = aiohttp.ClientTimeout(
+                    total=None,
+                    connect=30,
+                    sock_connect=30,
+                    sock_read=60  # 减少超时时间到1分钟
+                )
                 
-                # 获取WebSocket URL的代理
+                # 设置WebSocket URL和代理
                 ws_url = 'wss://gateway.discord.gg/?v=9&encoding=json'
                 ws_proxy = self._get_proxy_for_url(ws_url)
                 if ws_proxy:
@@ -201,64 +280,148 @@ class DiscordClient:
                 else:
                     message_logger.warning("[WebSocket] 未配置HTTPS代理，尝试直接连接")
                 
-                async with self.session.ws_connect(
+                # 创建WebSocket连接
+                message_logger.debug(f"[WebSocket] 开始连接 (重试次数: {retry_count})")
+                
+                # 执行连接
+                self.ws = await self.session.ws_connect(
                     ws_url,
-                    heartbeat=self._heartbeat_interval,
+                    heartbeat=None,
                     proxy=ws_proxy,
                     timeout=timeout,
-                    ssl=True
-                ) as self.ws:
-                    # 重置重试计数
-                    retry_count = 0
-                    
-                    # 启动心跳
-                    heartbeat_task = asyncio.create_task(self._heartbeat())
-                    
-                    # 发送身份验证
-                    await self._identify()
-                    
+                    ssl=True,
+                    max_msg_size=0
+                )
+                message_logger.info("[WebSocket] 连接成功")
+                
+                # 重置变量
+                self._heartbeat_interval = None
+                self._last_sequence = None
+                connection_start_time = asyncio.get_event_loop().time()
+                
+                # 创建快速保活检查任务
+                async def fast_watchdog():
+                    try:
+                        while self._running and self.ws and not self.ws.closed:
+                            now = asyncio.get_event_loop().time()
+                            # 如果心跳间隔已设置并且上次心跳已发送（表示心跳进程已启动）
+                            if self._heartbeat_interval and self.last_heartbeat_sent > 0:
+                                time_elapsed = now - self.last_heartbeat_sent
+                                # 如果超过心跳间隔的80%没有活动，主动关闭连接以触发重连
+                                if time_elapsed > (self._heartbeat_interval / 1000 * 0.8):
+                                    message_logger.warning(f"[快速监控] 检测到心跳可能超时 ({time_elapsed:.1f}秒无活动)，主动关闭连接")
+                                    if self.ws and not self.ws.closed:
+                                        await self.ws.close(code=1000, message=b"Fast reconnect")
+                                    return
+                            # 每2秒检查一次
+                            await asyncio.sleep(2)
+                    except asyncio.CancelledError:
+                        message_logger.debug("[快速监控] 监控任务被取消")
+                    except Exception as e:
+                        message_logger.error(f"[快速监控] 监控任务错误: {str(e)}")
+                
+                # 启动快速监控任务
+                watchdog_task = asyncio.create_task(fast_watchdog())
+                activity_tasks.append(watchdog_task)
+                
+                # 处理WebSocket消息
+                try:
+                    # 处理WebSocket消息
                     async for msg in self.ws:
+                        # 更新活动时间
+                        self.last_activity_time = asyncio.get_event_loop().time()
+                        
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
                             op = data.get('op')
                             
+                            # 详细记录所有收到的消息
+                            message_logger.debug(f"[WebSocket] 收到消息: 类型={msg.type}, OP={op}, 完整数据={msg.data[:200]}{'...' if len(msg.data) > 200 else ''}")
+                            
+                            # 收到Hello消息
                             if op == 10:  # Hello
                                 self._heartbeat_interval = data['d']['heartbeat_interval']
+                                message_logger.info(f"[WebSocket] 收到Hello消息，心跳间隔: {self._heartbeat_interval/1000:.2f}秒")
+                                
+                                # 启动心跳任务
+                                if heartbeat_task:
+                                    heartbeat_task.cancel()
+                                heartbeat_task = asyncio.create_task(self._heartbeat())
+                                
+                                # 发送身份验证
+                                await self._identify()
+                            
+                            # 心跳确认
+                            elif op == 11:  # Heartbeat ACK
+                                message_logger.debug("[WebSocket] 收到心跳确认")
+                                # 更新最后心跳确认时间
+                                self.last_heartbeat_ack = asyncio.get_event_loop().time()
+                            
+                            # 数据分发
                             elif op == 0:  # Dispatch
                                 self._last_sequence = data.get('s')
                                 event_type = data.get('t')
                                 
                                 if event_type == 'MESSAGE_CREATE':
-                                    event_data = data.get('d')
-                                    try:
-                                        if not event_data:
-                                            message_logger.error("消息数据为空")
-                                            return
-                                        
-                                        await self.message_callback(event_data)
-                                    except Exception as e:
-                                        message_logger.error(f"消息处理错误: {str(e)}")
-                                        message_logger.debug(traceback.format_exc())
-                        elif msg.type == aiohttp.WSMsgType.CLOSED:
-                            message_logger.error(f"WebSocket连接关闭: 状态码={msg.data}, 原因={msg.extra}")
-                            break
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            message_logger.error(f"WebSocket连接错误: {msg.data}")
-                            break
+                                    if self.message_callback:
+                                        asyncio.create_task(self.message_callback(data['d']))
+                                elif event_type == 'READY':
+                                    message_logger.info(f"[WebSocket] Discord连接就绪，用户: {data['d'].get('user', {}).get('username', 'Unknown')}")
                             
-            except aiohttp.ClientConnectorError as e:
-                message_logger.error(f"WebSocket连接错误: 无法连接到Discord服务器 - {str(e)}")
-                message_logger.error(traceback.format_exc())
-            except asyncio.TimeoutError:
-                message_logger.error("WebSocket连接超时")
-                message_logger.error(traceback.format_exc())
-            except aiohttp.ClientError as e:
-                message_logger.error(f"WebSocket连接错误: aiohttp客户端错误 - {str(e)}")
-                message_logger.error(traceback.format_exc())
+                            # 无效会话
+                            elif op == 9:  # Invalid Session
+                                resumable = data.get('d', False)
+                                message_logger.warning(f"[WebSocket] 会话无效，{'可恢复' if resumable else '不可恢复'}，将重新连接")
+                                self._last_sequence = None if not resumable else self._last_sequence
+                                break
+                            
+                            # 服务器要求重连
+                            elif op == 7:  # Reconnect
+                                message_logger.info("[WebSocket] 收到服务器要求重连的指令")
+                                break
+                        
+                        # 连接错误或关闭
+                        elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                            message_logger.warning(f"[WebSocket] 连接状态改变: {msg.type}")
+                            # 详细记录关闭信息
+                            if msg.type == aiohttp.WSMsgType.CLOSE:
+                                message_logger.warning(f"[WebSocket] 连接关闭: 代码={msg.data}, 原因={msg.extra}")
+                            elif msg.type == aiohttp.WSMsgType.ERROR:
+                                message_logger.error(f"[WebSocket] 连接错误: {msg.data}")
+                                if hasattr(msg, 'extra') and msg.extra:
+                                    message_logger.error(f"[WebSocket] 错误详情: {msg.extra}")
+                            break
+                        # 记录其他类型的消息
+                        else:
+                            message_logger.warning(f"[WebSocket] 收到未处理的消息类型: {msg.type}, 数据: {str(msg.data)[:200]}")
+                
+                except asyncio.TimeoutError:
+                    message_logger.error("[WebSocket] 连接超时")
+                    # 记录连接状态
+                    if self.ws:
+                        message_logger.error(f"[WebSocket] 超时时连接状态: closed={self.ws.closed}, exception={self.ws.exception() if hasattr(self.ws, 'exception') else 'N/A'}")
+                except aiohttp.ClientError as e:
+                    message_logger.error(f"[WebSocket] 客户端错误: {str(e)}")
+                    # 记录更详细的错误信息
+                    if hasattr(e, '__dict__'):
+                        message_logger.error(f"[WebSocket] 客户端错误详情: {e.__dict__}")
+                except Exception as e:
+                    message_logger.error(f"[WebSocket] 处理消息错误: {str(e)}")
+                    message_logger.error(traceback.format_exc())
+                
+                # 计算连接持续时间
+                connection_duration = asyncio.get_event_loop().time() - connection_start_time
+                message_logger.info(f"[WebSocket] 连接持续了 {connection_duration:.1f} 秒")
+                
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+                message_logger.error(f"[WebSocket] 连接失败: {type(e).__name__} - {str(e)}")
             except Exception as e:
-                message_logger.error(f"WebSocket连接错误: {str(e)}")
+                message_logger.error(f"[WebSocket] 未预期错误: {str(e)}")
                 message_logger.error(traceback.format_exc())
-            finally:
+            
+            # 清理资源
+            try:
+                # 取消任务
                 if heartbeat_task:
                     heartbeat_task.cancel()
                     try:
@@ -266,18 +429,30 @@ class DiscordClient:
                     except asyncio.CancelledError:
                         pass
                 
-                retry_count += 1
-                if retry_count < max_retries:
-                    # 等待一段时间后重试
-                    await asyncio.sleep(5 * retry_count)  # 递增等待时间
-                    message_logger.info(f"尝试重新连接 (第 {retry_count} 次)")
-                else:
-                    message_logger.error("达到最大重试次数，停止重连")
-                    break
+                # 取消所有活动监控任务
+                for task in activity_tasks:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
                 
-        if self.session:
-            await self.session.close()
-                
+                # 关闭WebSocket
+                if self.ws and not self.ws.closed:
+                    await self.ws.close()
+            except Exception as e:
+                message_logger.error(f"[WebSocket] 清理资源错误: {str(e)}")
+            
+            # 准备重连
+            retry_count += 1
+            
+            # 根据重试次数调整延迟，但保持较短的延迟，以减少中断时间
+            current_delay = min(retry_delay * (1.1 ** min(retry_count, 5)), 30)
+            message_logger.info(f"[WebSocket] 将在 {current_delay:.1f} 秒后尝试重新连接 (第 {retry_count} 次)")
+            await asyncio.sleep(current_delay)
+        
+        message_logger.info("消息监听服务已停止")
+
     async def close(self):
         """关闭客户端连接"""
         self._running = False

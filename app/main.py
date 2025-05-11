@@ -97,23 +97,26 @@ async def health_check():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
-    # Register with Discord client
-    discord_client.register_websocket(websocket)
-    
-    # Register with logging system and add log sending method
-    register_websocket(websocket)
-    
-    # Add method to send log messages
-    async def send_log_message(message):
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            logger.error(f"Failed to send log to websocket: {str(e)}")
-    
-    # Attach the method to the websocket object
-    websocket._send_log_message = send_log_message
-    
     try:
+        # Register with Discord client
+        discord_client.register_websocket(websocket)
+        
+        # Register with logging system and add log sending method
+        register_websocket(websocket)
+        
+        # Add method to send log messages
+        async def send_log_message(message):
+            try:
+                if websocket.client_state != 'DISCONNECTED':
+                    await websocket.send_text(message)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to send log to websocket: {str(e)}")
+                return False
+        
+        # Attach the method to the websocket object
+        websocket._send_log_message = send_log_message
+        
         # Send a welcome message
         await websocket.send_text(json.dumps({
             "type": "connection", 
@@ -125,10 +128,11 @@ async def websocket_endpoint(websocket: WebSocket):
             # Keep the connection alive
             await websocket.receive_text()
     except WebSocketDisconnect:
-        discord_client.unregister_websocket(websocket)
-        unregister_websocket(websocket)
+        logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
+    finally:
+        # Always ensure cleanup in all cases
         discord_client.unregister_websocket(websocket)
         unregister_websocket(websocket)
 

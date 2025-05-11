@@ -2,6 +2,7 @@ import os
 import logging
 import sys
 import json
+import asyncio
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from .telegram_logger import TelegramHandler
@@ -30,26 +31,44 @@ class WebSocketHandler(logging.Handler):
                 'timestamp': record.created,
                 'logger': record.name
             }
-            self._broadcast_log(log_data)
+            
+            # 获取当前事件循环
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果事件循环正在运行，创建一个任务
+                loop.create_task(self._broadcast_log(log_data))
+            else:
+                # 如果事件循环没有运行，直接运行（不太可能发生）
+                loop.run_until_complete(self._broadcast_log(log_data))
         except Exception:
             self.handleError(record)
     
-    def _broadcast_log(self, log_data):
+    async def _broadcast_log(self, log_data):
         """广播日志到所有已连接的WebSocket客户端"""
         message = json.dumps(log_data)
         disconnected = set()
         
-        for ws in websocket_clients:
+        # 创建副本进行遍历，避免在遍历时修改集合
+        clients_copy = websocket_clients.copy()
+        
+        for ws in clients_copy:
             try:
-                # 这里需要使用异步的方式发送，但在同步处理器中不能直接使用await
-                # 使用一个小技巧：将发送任务添加到事件循环中
                 if hasattr(ws, '_send_log_message'):
-                    ws._send_log_message(message)
+                    await ws._send_log_message(message)
+                elif hasattr(ws, 'state') and ws.state:
+                    await ws.send_str(message)
+                else:
+                    disconnected.add(ws)
             except Exception:
                 disconnected.add(ws)
-                
-        # 移除断开连接的客户端
-        websocket_clients.difference_update(disconnected)
+        
+        # 遍历完成后再移除断开的连接
+        if disconnected:
+            try:
+                websocket_clients.difference_update(disconnected)
+            except RuntimeError as e:
+                # 如果集合在其他地方被修改，记录错误但不中断操作
+                logging.error(f"Error updating websocket clients set: {str(e)}")
 
 def register_websocket(websocket):
     """注册WebSocket客户端以接收日志"""
