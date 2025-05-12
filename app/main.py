@@ -10,6 +10,7 @@ from typing import List
 import asyncio
 from datetime import datetime
 import os
+import time
 
 # Apply proxy patch for HTTPS-over-HTTPS support
 from .utils.proxy_patch import apply_proxy_patch
@@ -108,7 +109,53 @@ async def websocket_endpoint(websocket: WebSocket):
         async def send_log_message(message):
             try:
                 if websocket.client_state != 'DISCONNECTED':
-                    await websocket.send_text(message)
+                    # Format the log message as JSON with type and message
+                    if isinstance(message, str):
+                        # Parse the log string to extract level and message
+                        parts = message.split(' - ', 2)
+                        if len(parts) >= 3:
+                            timestamp, logger_name, content = parts
+                            level = 'INFO'
+                            if ' DEBUG ' in message:
+                                level = 'DEBUG'
+                            elif ' INFO ' in message:
+                                level = 'INFO'
+                            elif ' WARNING ' in message:
+                                level = 'WARN'
+                            elif ' ERROR ' in message:
+                                level = 'ERROR'
+                            
+                            # Convert timestamp to float for consistent formatting
+                            try:
+                                ts = datetime.strptime(timestamp.strip(), '%Y-%m-%d %H:%M:%S,%f')
+                                ts_float = ts.timestamp()
+                            except Exception as e:
+                                ts_float = time.time()
+                                logger.error(f"Failed to parse timestamp: {str(e)}") # Log the exception
+                            
+                            log_data = {
+                                "type": "log",
+                                "level": level,
+                                "logger": logger_name.strip(),
+                                "message": content.strip(),
+                                "timestamp": ts_float
+                            }
+                        else:
+                            log_data = {
+                                "type": "log",
+                                "level": "INFO",
+                                "message": message.strip(),
+                                "timestamp": time.time()
+                            }
+                    else:
+                        log_data = {
+                            "type": "log",
+                            "level": message.get("level", "INFO"),
+                            "logger": message.get("logger", "System"),
+                            "message": message.get("message", str(message)).strip(),
+                            "timestamp": time.time()
+                        }
+                    await websocket.send_text(json.dumps(log_data))
                 return True
             except Exception as e:
                 logger.error(f"Failed to send log to websocket: {str(e)}")
@@ -121,7 +168,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps({
             "type": "connection", 
             "status": "connected",
-            "message": "WebSocket connection established"
+            "message": "WebSocket connection established",
+            "timestamp": time.time()
         }))
         
         while True:
