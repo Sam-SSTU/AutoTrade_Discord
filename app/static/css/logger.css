@@ -1,0 +1,182 @@
+.logger-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 300px; /* 增加高度以显示更多日志 */
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    border-top: 2px solid #333;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+    transition: height 0.3s ease;
+}
+
+.logger-container.collapsed {
+    height: 32px;
+}
+
+.logger-header {
+    padding: 6px 12px;
+    background: #2d2d2d;
+    border-bottom: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 32px;
+    min-height: 32px;
+    user-select: none;
+}
+
+.logger-title {
+    font-weight: 500;
+    color: #fff;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.logger-title::before {
+    content: "⚙";
+    font-size: 14px;
+}
+
+.logger-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.logger-button {
+    padding: 2px 8px;
+    background: #3d3d3d;
+    border: 1px solid #555;
+    color: #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+}
+
+.logger-button:hover {
+    background: #4d4d4d;
+    color: #fff;
+}
+
+.logger-button.active {
+    background: #0078d4;
+    border-color: #0078d4;
+    color: #fff;
+}
+
+.logger-button.active:hover {
+    background: #0086ef;
+}
+
+.logger-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    background: #1a1a1a;
+}
+
+.log-entry {
+    margin: 2px 0;
+    padding: 1px 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    opacity: 0.9;
+}
+
+.log-entry:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.log-entry.error {
+    color: #ff4444;
+}
+
+.log-entry.warn {
+    color: #ffbb33;
+}
+
+.log-entry.info {
+    color: #00C851;
+}
+
+.log-entry.debug {
+    color: #33b5e5;
+}
+
+/* Timestamp style */
+.log-timestamp {
+    color: #666;
+    font-size: 11px;
+    min-width: 85px;
+}
+
+/* Logger name style */
+.log-logger {
+    color: #888;
+    font-size: 11px;
+    min-width: 120px;
+    font-weight: 500;
+}
+
+/* Message style */
+.log-message {
+    flex: 1;
+    color: inherit;
+}
+
+/* Custom scrollbar */
+.logger-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.logger-content::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+.logger-content::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 3px;
+}
+
+.logger-content::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Toggle button */
+.logger-toggle {
+    cursor: pointer;
+    padding: 2px 8px;
+    background: #3d3d3d;
+    border: 1px solid #555;
+    color: #ccc;
+    border-radius: 3px;
+    font-size: 11px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.logger-toggle:hover {
+    background: #4d4d4d;
+    color: #fff;
+} 
