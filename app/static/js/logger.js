@@ -147,6 +147,12 @@ class Logger {
             } catch (e) {
                 // 如果解码失败，使用原始消息
                 console.warn('Failed to decode message:', e);
+                this.log({
+                    type: 'error',
+                    level: 'ERROR',
+                    logger: 'System',
+                    message: `Failed to decode message: ${e.message}` // Display error in logger UI
+                });
             }
         }
         messageEl.textContent = message;
