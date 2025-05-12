@@ -129,8 +129,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             try:
                                 ts = datetime.strptime(timestamp.strip(), '%Y-%m-%d %H:%M:%S,%f')
                                 ts_float = ts.timestamp()
-                            except:
+                            except Exception as e:
                                 ts_float = time.time()
+                                logger.error(f"Failed to parse timestamp: {str(e)}") # Log the exception
                             
                             log_data = {
                                 "type": "log",
