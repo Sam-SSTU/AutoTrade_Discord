@@ -11,10 +11,9 @@ class AIMessage(Base):
     channel_name = Column(String(200), nullable=False)
     message_content = Column(Text, nullable=False)
     references = Column(JSON, nullable=True)  # Store references and attachments as JSON
-    created_at = Column('created_at', types.DateTime(), 
-                       DefaultClause("(now() at time zone 'utc')::timestamp"),
-                       nullable=False,
-                       server_default=DefaultClause("(now() at time zone 'utc')::timestamp"))
+    created_at = Column(DateTime(timezone=True), 
+                       server_default=func.now(),
+                       nullable=False)
     
     def __repr__(self):
         return f"<AIMessage(id={self.id}, channel_id='{self.channel_id}', created_at='{self.created_at}')>" 

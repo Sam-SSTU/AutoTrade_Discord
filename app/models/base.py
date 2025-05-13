@@ -4,7 +4,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 import enum
 from ..database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 
 Base = declarative_base()
 
@@ -12,11 +12,11 @@ class Platform(enum.Enum):
     DISCORD = "discord"
 
 class KOLCategory(enum.Enum):
-    CRYPTO = "crypto"
-    STOCKS = "stocks"
-    FUTURES = "futures"
-    FOREX = "forex"
-    OTHERS = "others"
+    CRYPTO = "CRYPTO"
+    STOCKS = "STOCKS"
+    FUTURES = "FUTURES"
+    FOREX = "FOREX"
+    OTHERS = "OTHERS"
 
 class Channel(Base):
     __tablename__ = "channels"
@@ -36,8 +36,8 @@ class Channel(Base):
     is_forwarding = Column(Boolean, default=False)  # 是否转发到AI模块
     kol_category = Column(Enum(KOLCategory), nullable=True)
     kol_name = Column(String, nullable=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     messages = relationship("Message", back_populates="channel")
 
@@ -51,19 +51,19 @@ class KOL(Base):
     category = Column(String)
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     messages = relationship("Message", back_populates="kol")
 
 class Attachment(Base):
-    __tablename__ = 'attachments'
+    __tablename__ = "attachments"
     
     id = Column(Integer, primary_key=True)
-    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=True)
+    message_id = Column(Integer, ForeignKey("messages.id", ondelete="CASCADE"))
     filename = Column(String)
     content_type = Column(String)
     file_data = Column(LargeBinary)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     message = relationship("Message", back_populates="attachments")
 
@@ -78,11 +78,11 @@ class Message(Base):
     embeds = Column(JSON)
     referenced_message_id = Column(String)
     referenced_content = Column(String)
-    created_at = Column(DateTime)
+    created_at = Column(DateTime(timezone=True))  # Discord 消息的创建时间，使用 UTC
     
     channel = relationship("Channel", back_populates="messages")
     kol = relationship("KOL", back_populates="messages")
-    attachments = relationship("Attachment", back_populates="message", cascade="all, delete-orphan") 
+    attachments = relationship("Attachment", back_populates="message", cascade="all, delete-orphan")
 
 class UnreadMessage(Base):
     __tablename__ = "unread_messages"
@@ -91,8 +91,8 @@ class UnreadMessage(Base):
     channel_id = Column(Integer, ForeignKey("channels.id"), nullable=False)
     last_read_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
     unread_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     channel = relationship("Channel", backref="unread_messages")
     last_read_message = relationship("Message") 

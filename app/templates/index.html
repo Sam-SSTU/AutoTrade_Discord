@@ -1189,19 +1189,22 @@
                         });
                     }
                 },
-                formatMessageTime(timestamp) {
+                formatDate(dateString) {
                     try {
-                        const date = new Date(timestamp);
-                        if (this.selectedTimezone === 'UTC') {
-                            return date.toISOString();
-                        } else if (this.selectedTimezone === 'local') {
-                            return date.toLocaleString();
-                        } else {
-                            return date.toLocaleString('en-US', { timeZone: this.selectedTimezone });
-                        }
+                        const date = new Date(dateString);
+                        return date.toLocaleString('en-US', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: false,
+                            timeZone: this.selectedTimezone === 'local' ? undefined : this.selectedTimezone
+                        });
                     } catch (e) {
-                        console.error('Error formatting time:', e);
-                        return timestamp;
+                        console.error('Error formatting date:', e);
+                        return dateString;
                     }
                 },
                 updateClocks() {
@@ -1409,10 +1412,6 @@
                         const element = this.$refs.messageList;
                         element.scrollTop = element.scrollHeight;
                     }
-                },
-                formatDate(dateString) {
-                    const date = new Date(dateString);
-                    return date.toLocaleString();
                 },
                 showImagePreview(attachment) {
                     this.previewImageUrl = `/api/messages/attachments/${attachment.id}`;

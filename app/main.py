@@ -111,54 +111,84 @@ async def websocket_endpoint(websocket: WebSocket):
                 if websocket.client_state != 'DISCONNECTED':
                     # Format the log message as JSON with type and message
                     if isinstance(message, str):
-                        # Parse the log string to extract level and message
-                        parts = message.split(' - ', 2)
-                        if len(parts) >= 3:
-                            timestamp, logger_name, content = parts
-                            level = 'INFO'
-                            if ' DEBUG ' in message:
-                                level = 'DEBUG'
-                            elif ' INFO ' in message:
+                        try:
+                            # 尝试解析消息是否为 JSON
+                            data = json.loads(message)
+                            if isinstance(data, dict):
+                                log_data = {
+                                    "type": "log",
+                                    "level": data.get("level", "INFO"),
+                                    "logger": data.get("logger", "System"),
+                                    "message": data.get("message", "").strip(),
+                                    "timestamp": data.get("timestamp", time.time())
+                                }
+                            else:
+                                raise ValueError("Message is not a dict")
+                        except json.JSONDecodeError:
+                            # 如果不是 JSON，按普通字符串处理
+                            parts = message.split(' - ', 2)
+                            if len(parts) >= 3:
+                                timestamp_str, logger_name, content = parts
                                 level = 'INFO'
-                            elif ' WARNING ' in message:
-                                level = 'WARN'
-                            elif ' ERROR ' in message:
-                                level = 'ERROR'
-                            
-                            # Convert timestamp to float for consistent formatting
-                            try:
-                                ts = datetime.strptime(timestamp.strip(), '%Y-%m-%d %H:%M:%S,%f')
-                                ts_float = ts.timestamp()
-                            except Exception as e:
-                                ts_float = time.time()
-                                logger.error(f"Failed to parse timestamp: {str(e)}") # Log the exception
-                            
-                            log_data = {
-                                "type": "log",
-                                "level": level,
-                                "logger": logger_name.strip(),
-                                "message": content.strip(),
-                                "timestamp": ts_float
-                            }
-                        else:
-                            log_data = {
-                                "type": "log",
-                                "level": "INFO",
-                                "message": message.strip(),
-                                "timestamp": time.time()
-                            }
+                                if ' DEBUG ' in message:
+                                    level = 'DEBUG'
+                                elif ' INFO ' in message:
+                                    level = 'INFO'
+                                elif ' WARNING ' in message:
+                                    level = 'WARN'
+                                elif ' ERROR ' in message:
+                                    level = 'ERROR'
+                                
+                                # 修复时间戳解析
+                                try:
+                                    # 如果是 JSON 字符串，直接使用当前时间
+                                    if timestamp_str.strip().startswith('{'):
+                                        ts_float = time.time()
+                                    else:
+                                        # 否则尝试解析时间戳
+                                        ts = datetime.strptime(timestamp_str.strip(), '%Y-%m-%d %H:%M:%S,%f')
+                                        ts_float = ts.timestamp()
+                                except Exception as e:
+                                    ts_float = time.time()
+                                    logger.debug(f"Using current time as timestamp due to parsing error: {str(e)}")
+                                
+                                log_data = {
+                                    "type": "log",
+                                    "level": level,
+                                    "logger": logger_name.strip(),
+                                    "message": content.strip(),
+                                    "timestamp": ts_float
+                                }
+                            else:
+                                log_data = {
+                                    "type": "log",
+                                    "level": "INFO",
+                                    "message": message.strip(),
+                                    "timestamp": time.time()
+                                }
                     else:
+                        # 如果消息已经是字典格式
                         log_data = {
                             "type": "log",
                             "level": message.get("level", "INFO"),
                             "logger": message.get("logger", "System"),
                             "message": message.get("message", str(message)).strip(),
-                            "timestamp": time.time()
+                            "timestamp": message.get("timestamp", time.time())
                         }
-                    await websocket.send_text(json.dumps(log_data))
+                    
+                    # 确保所有字段都存在
+                    log_data.setdefault("type", "log")
+                    log_data.setdefault("level", "INFO")
+                    log_data.setdefault("logger", "System")
+                    log_data.setdefault("message", "")
+                    log_data.setdefault("timestamp", time.time())
+                    
+                    # 确保中文正确编码
+                    json_str = json.dumps(log_data, ensure_ascii=False)
+                    await websocket.send_text(json_str)
                 return True
             except Exception as e:
-                logger.error(f"Failed to send log to websocket: {str(e)}")
+                logger.error(f"Failed to send log to websocket: {str(e)}", exc_info=True)
                 return False
         
         # Attach the method to the websocket object
@@ -170,15 +200,22 @@ async def websocket_endpoint(websocket: WebSocket):
             "status": "connected",
             "message": "WebSocket connection established",
             "timestamp": time.time()
-        }))
+        }, ensure_ascii=False))
         
         while True:
             # Keep the connection alive
-            await websocket.receive_text()
+            data = await websocket.receive_text()
+            try:
+                # 尝试解析接收到的数据
+                json_data = json.loads(data)
+                logger.debug(f"Received WebSocket message: {json.dumps(json_data, ensure_ascii=False)}")
+            except json.JSONDecodeError:
+                logger.debug(f"Received non-JSON WebSocket message: {data}")
+            
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
+        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
     finally:
         # Always ensure cleanup in all cases
         discord_client.unregister_websocket(websocket)
