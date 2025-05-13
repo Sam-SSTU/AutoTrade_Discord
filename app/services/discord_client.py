@@ -1116,7 +1116,7 @@ class DiscordClient:
                 embeds=json.dumps(message_data.get('embeds', [])),
                 referenced_message_id=str(message_data.get('referenced_message', {}).get('id')) if message_data.get('referenced_message') else None,
                 referenced_content=message_data.get('referenced_message', {}).get('content') if message_data.get('referenced_message') else None,
-                created_at=datetime.fromisoformat(message_data.get('timestamp').replace('Z', '+00:00'))
+                created_at=datetime.fromisoformat(message_data.get('timestamp').replace('Z', '+00:00'))  # Discord 返回的是 UTC 时间
             )
             
             db.add(message)
@@ -1138,14 +1138,14 @@ class DiscordClient:
                 db.add(unread)
             db.commit()
             
-            # Send WebSocket notification
+            # Send WebSocket notification with UTC timestamp
             await self.broadcast_message({
                 'type': 'new_message',
                 'channel_id': channel.platform_channel_id,
                 'channel_name': channel.name,
                 'author_name': kol.name,
                 'content': message.content,
-                'created_at': message.created_at.isoformat()
+                'created_at': message.created_at.isoformat()  # 直接使用 UTC 时间的 ISO 格式
             })
 
             # Forward message to AI module if enabled
