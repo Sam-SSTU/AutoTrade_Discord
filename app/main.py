@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pathlib import Path
 import json
 from typing import List
@@ -11,6 +12,7 @@ import asyncio
 from datetime import datetime
 import os
 import time
+from websockets.exceptions import ConnectionClosedOK
 
 # Apply proxy patch for HTTPS-over-HTTPS support
 from .utils.proxy_patch import apply_proxy_patch
@@ -80,6 +82,22 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 storage_path = os.path.join(os.getcwd(), 'storage')
 os.makedirs(storage_path, exist_ok=True)
 app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
+
+# Serve favicon.ico for apple touch icon requests
+APPLE_ICON_PATHS = ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"]
+FAVICON_PATH = Path(__file__).parent / "static" / "favicon.ico"
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def get_apple_touch_icon():
+    if FAVICON_PATH.exists():
+        return FileResponse(FAVICON_PATH)
+    return {"error": "Favicon not found"}, 404
+
+@app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+async def get_apple_touch_icon_precomposed():
+    if FAVICON_PATH.exists():
+        return FileResponse(FAVICON_PATH)
+    return {"error": "Favicon not found"}, 404
 
 @app.get("/")
 async def root(request: Request):
@@ -187,6 +205,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     json_str = json.dumps(log_data, ensure_ascii=False)
                     await websocket.send_text(json_str)
                 return True
+            except ConnectionClosedOK:
+                # Log a concise message if the connection is already closed
+                logger.info(f"Failed to send log to websocket: Connection already closed for client {websocket.client}")
+                return False
             except Exception as e:
                 logger.error(f"Failed to send log to websocket: {str(e)}", exc_info=True)
                 return False
