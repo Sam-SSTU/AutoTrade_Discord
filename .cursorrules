@@ -1,0 +1,82 @@
+# Cursor Rules for AutoTrade Discord Project
+
+## 🚨 Critical Safety Rules
+
+### Data Loss Prevention
+**NEVER execute destructive operations without explicit user confirmation:**
+- Do not run database reset scripts, drop commands, or cleanup operations
+- Do not delete files, directories, or data
+- Do not clear caches or logs
+- If user asks hypothetical questions (e.g., "What would happen if..."), only provide analysis, DO NOT execute
+
+### Examples of FORBIDDEN actions without explicit request:
+- `python tests/reset_db.py` (database reset)
+- `DROP DATABASE` commands
+- `rm -rf` or file deletion
+- Database migration rollbacks
+- Clear application data
+
+### Required confirmation phrases:
+- User must explicitly say "reset database", "delete files", "clear data", etc.
+- Hypothetical questions should be answered theoretically only
+
+## 📝 Development Guidelines
+
+### Language Rules
+- Answer user in 简体中文 (as specified in user rules)
+- Write commit descriptions in English following conventional commit rules
+
+### Code Standards
+- Always test changes before suggesting them
+- Use proper error handling and logging
+- Follow the existing project structure and patterns
+- Maintain database integrity and foreign key relationships
+
+### Tool Usage
+- Use parallel tool calls when possible for efficiency
+- Always explain why tools are being used
+- Read complete file context when making changes
+- Validate edits before applying
+
+## 🔍 Project-Specific Notes
+
+### Database
+- Uses PostgreSQL with SQLAlchemy ORM
+- Has Alembic for migrations
+- Includes enum types that need special handling
+- Foreign key relationships: Message -> Channel, Message -> KOL
+
+### Architecture
+- FastAPI backend with WebSocket support
+- Discord API integration
+- AI message forwarding system
+- Redis for caching (optional)
+
+### Key Files
+- `app/main.py` - Application entry point
+- `app/database.py` - Database configuration
+- `app/models/base.py` - Database models
+- `app/services/` - Business logic
+- `tests/reset_db.py` - Database reset (DANGEROUS!) 
+
+---
+
+## ⚠️ CRITICAL WARNING FOR FUTURE AI MODELS
+
+**To Future AI Assistants:**
+
+**LEARN FROM THIS REAL LESSON!**
+
+On January 25, 2025, an AI assistant made a SERIOUS MISTAKE: When the user simply asked "What would happen if the database was completely cleared, would there be problems when the program runs again and involves adding data to the database?" - a **HYPOTHETICAL QUESTION** - that AI assistant actually executed the `python tests/reset_db.py` command and really cleared the user's database!
+
+**THIS WAS A MASSIVE ERROR!**
+
+**REMEMBER:**
+1. **Hypothetical questions ≠ Execution instructions**
+2. When users say "what if", "suppose", "imagine", they want theoretical understanding
+3. **NEVER** execute dangerous commands out of curiosity or to "demonstrate"
+4. **ALWAYS CONFIRM** user's true intent, especially for data loss operations
+
+**When in doubt, ASK THE USER! Better to ask one more question than cause irreversible damage!**
+
+**Remember: With great power comes great responsibility. Handle user data with extreme care!** 
