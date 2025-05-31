@@ -44,6 +44,7 @@ async def get_messages(
     channel_id: str,
     page: int = Query(1, gt=0),
     per_page: int = Query(20, gt=0),
+    search: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """获取频道消息"""
@@ -52,10 +53,16 @@ async def get_messages(
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         
+        # 构建查询
+        query = db.query(Message).filter(Message.channel_id == channel.id)
+        
+        # 如果有搜索条件，添加搜索过滤
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(Message.content.ilike(search_term))
+        
         # 按创建时间倒序查询消息
-        messages = db.query(Message).filter(
-            Message.channel_id == channel.id
-        ).order_by(desc(Message.created_at)).offset(
+        messages = query.order_by(desc(Message.created_at)).offset(
             (page - 1) * per_page
         ).limit(per_page).all()
         
@@ -74,7 +81,9 @@ async def get_messages(
                         "content_type": attachment.content_type
                     } for attachment in message.attachments
                 ] if message.attachments else []
-            } for message in messages]
+            } for message in messages],
+            "search_term": search,
+            "total_found": query.count() if search else None
         }
     except Exception as e:
         logger.error(f"Error getting messages: {str(e)}")
@@ -547,4 +556,63 @@ async def get_unread_counts(db: Session = Depends(get_db)):
         return unread_counts
     except Exception as e:
         logger.error(f"Error getting unread counts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/messages/search")
+async def search_messages_global(
+    search: str = Query(..., min_length=1),
+    page: int = Query(1, gt=0),
+    per_page: int = Query(20, gt=0),
+    db: Session = Depends(get_db)
+):
+    """全局搜索消息（包括所有频道和帖子）"""
+    try:
+        if len(search.strip()) < 1:
+            raise HTTPException(status_code=400, detail="Search term must be at least 1 character")
+        
+        search_term = f"%{search}%"
+        
+        # 在所有消息中搜索，并关联频道信息
+        query = db.query(Message, Channel).join(
+            Channel, Message.channel_id == Channel.id
+        ).filter(
+            Message.content.ilike(search_term)
+        ).order_by(desc(Message.created_at))
+        
+        total_count = query.count()
+        
+        # 分页查询
+        results = query.offset((page - 1) * per_page).limit(per_page).all()
+        
+        messages = []
+        for message, channel in results:
+            messages.append({
+                "id": message.id,
+                "content": message.content,
+                "author_name": message.kol.name,
+                "created_at": message.created_at.isoformat(),
+                "referenced_message_id": message.referenced_message_id,
+                "referenced_content": message.referenced_content,
+                "channel_id": channel.platform_channel_id,
+                "channel_name": channel.name,
+                "channel_type": channel.type,  # 用于区分频道类型
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "filename": attachment.filename,
+                        "content_type": attachment.content_type
+                    } for attachment in message.attachments
+                ] if message.attachments else []
+            })
+        
+        return {
+            "messages": messages,
+            "search_term": search,
+            "total_found": total_count,
+            "page": page,
+            "per_page": per_page,
+            "has_more": len(messages) == per_page
+        }
+    except Exception as e:
+        logger.error(f"Error searching messages: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 
