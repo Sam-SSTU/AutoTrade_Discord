@@ -164,6 +164,9 @@
         }
         .message-item:hover {
             background-color: #f8f9fa;
+            border-color: #007bff !important;
+            transform: translateY(-1px);
+            transition: all 0.2s ease;
         }
         .clock-display {
             font-family: 'Roboto Mono', monospace;
@@ -376,6 +379,18 @@
             background-color: rgba(79,84,92,0.32);
             color: #fff;
         }
+        .global-search-message {
+            transition: all 0.2s ease;
+        }
+        .global-search-message:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .search-highlight {
+            background-color: #ffeb3b;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -390,6 +405,27 @@
                 </div>
             </div>
             <div class="header-right">
+                <div class="input-group me-3" style="width: 300px;">
+                    <span class="input-group-text">
+                        <i class="el-icon-search"></i>
+                    </span>
+                    <input type="text" class="form-control" 
+                           v-model="globalSearch" 
+                           placeholder="全局消息搜索..."
+                           @input="onGlobalSearchChange"
+                           @keyup.enter="performGlobalSearch">
+                    <button v-if="globalSearch" 
+                            class="btn btn-outline-secondary" 
+                            @click="clearGlobalSearch"
+                            type="button">
+                        <i class="el-icon-close"></i>
+                    </button>
+                    <button class="btn btn-primary" 
+                            @click="performGlobalSearch"
+                            :disabled="!globalSearch">
+                        搜索
+                    </button>
+                </div>
                 <button class="btn btn-outline-primary me-3" @click="toggleDevMode">
                     <i class="el-icon-setting"></i>
                     <span v-text="devMode ? '退出开发者模式' : '开发者模式'"></span>
@@ -512,6 +548,21 @@
                         <div class="d-flex justify-content-between align-items-center">
                             <h5 class="mb-0" v-text="selectedChannel ? selectedChannel.name : 'Select a channel'"></h5>
                             <div v-if="selectedChannel" class="d-flex gap-2">
+                                <div class="input-group" style="width: 250px;">
+                                    <span class="input-group-text">
+                                        <i class="el-icon-search"></i>
+                                    </span>
+                                    <input type="text" class="form-control form-control-sm" 
+                                           v-model="messageSearch" 
+                                           placeholder="Search messages..."
+                                           @input="onMessageSearchChange">
+                                    <button v-if="messageSearch" 
+                                            class="btn btn-outline-secondary btn-sm" 
+                                            @click="clearMessageSearch"
+                                            type="button">
+                                        <i class="el-icon-close"></i>
+                                    </button>
+                                </div>
                                 <button class="btn btn-outline-secondary btn-sm" @click="refreshMessages">
                                     <i class="el-icon-refresh"></i>
                                     刷新
@@ -531,6 +582,23 @@
                     </div>
                     <div class="card-body message-list" ref="messageList" @scroll="handleScroll">
                         <div v-if="selectedChannel">
+                            <!-- 搜索状态显示 -->
+                            <div v-if="messageSearch" class="alert alert-info mb-3">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span>
+                                        <i class="el-icon-search"></i>
+                                        搜索: "{{ messageSearch }}"
+                                        <span v-if="searchResults && searchResults.total_found !== null">
+                                            (找到 {{ searchResults.total_found }} 条结果)
+                                        </span>
+                                    </span>
+                                    <button class="btn btn-sm btn-outline-secondary" @click="clearMessageSearch">
+                                        <i class="el-icon-close"></i>
+                                        清除搜索
+                                    </button>
+                                </div>
+                            </div>
+                            
                             <div v-if="showAddMessageForm" class="mb-3 p-3 border rounded bg-light">
                                 <div class="mb-2">
                                     <label class="form-label">Message Content:</label>
@@ -584,6 +652,57 @@
                         <div v-else class="text-center mt-3">
                             Please select a channel to view messages
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 全局搜索结果 -->
+        <div v-if="showGlobalSearchResults" class="mt-4">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="el-icon-search"></i>
+                            全局搜索结果: "{{ globalSearch }}"
+                            <span class="badge bg-primary ms-2">{{ globalSearchResults.length }} 条结果</span>
+                        </h5>
+                        <button class="btn btn-outline-secondary btn-sm" @click="clearGlobalSearch">
+                            <i class="el-icon-close"></i>
+                            关闭
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <div v-for="message in globalSearchResults" :key="message.id" 
+                         class="message-item border rounded p-3 mb-3 cursor-pointer"
+                         @click="navigateToMessage(message)"
+                         style="cursor: pointer;">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <span class="badge bg-secondary me-2">
+                                    {{ message.channel_type === 11 ? '帖子' : '频道' }}
+                                </span>
+                                <strong>{{ message.channel_name }}</strong>
+                            </div>
+                            <small class="text-muted">{{ formatDate(message.created_at) }}</small>
+                        </div>
+                        <div class="mb-2">
+                            <strong>{{ message.author_name }}:</strong>
+                        </div>
+                        <div class="message-content">
+                            <div v-html="highlightSearchTerm(message.content, globalSearch)"></div>
+                            <div v-if="message.referenced_content" class="referenced-content mt-2">
+                                <div class="quote-box">
+                                    <div class="quote-header">引用消息:</div>
+                                    <div class="quote-text" v-html="highlightSearchTerm(message.referenced_content, globalSearch)"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="globalSearchResults.length === 0" class="text-center text-muted py-4">
+                        <i class="el-icon-search" style="font-size: 3em;"></i>
+                        <div class="mt-2">没有找到匹配的消息</div>
                     </div>
                 </div>
             </div>
@@ -698,29 +817,62 @@
                 reconnectAttempts: 0,
                 imagePreviewVisible: false,
                 previewImageUrl: '',
+                messageSearch: '',
+                searchTimeout: null,
+                searchResults: null,
+                globalSearch: '',
+                globalSearchResults: [],
+                showGlobalSearchResults: false,
+                globalSearchTimeout: null,
             },
             computed: {
-                filteredChannels() {
-                    if (!this.channelSearch) {
-                        return this.channels;
-                    }
-                    const query = this.channelSearch.toLowerCase();
-                    return this.channels.filter(channel => 
-                        channel.name.toLowerCase().includes(query)
-                    );
-                },
                 hasUnreadMessages() {
                     return Object.values(this.unreadCounts).some(count => count > 0);
                 },
                 groupedChannels() {
                     if (!this.channels.length) return [];
                     
+                    // 如果有搜索条件，需要更智能地过滤
+                    let channelsToGroup = this.channels;
+                    let hasSearch = false;
+                    if (this.channelSearch) {
+                        hasSearch = true;
+                        const query = this.channelSearch.toLowerCase();
+                        
+                        // 收集所有匹配的频道和帖子
+                        const matchedChannels = new Set();
+                        const matchedParents = new Set();
+                        
+                        this.channels.forEach(channel => {
+                            if (channel.name.toLowerCase().includes(query)) {
+                                matchedChannels.add(channel.platform_channel_id);
+                                
+                                // 如果是论坛帖子，也要包含其父论坛频道
+                                if (channel.type === 11 && channel.parent_id) {
+                                    matchedParents.add(channel.parent_id);
+                                }
+                                
+                                // 如果是普通频道或论坛频道，要包含其父分类
+                                if (channel.parent_id && (channel.type !== 11)) {
+                                    matchedParents.add(channel.parent_id);
+                                }
+                            }
+                        });
+                        
+                        // 过滤频道：包含匹配的频道、匹配频道的父级、以及分类
+                        channelsToGroup = this.channels.filter(channel => {
+                            return matchedChannels.has(channel.platform_channel_id) ||
+                                   matchedParents.has(channel.platform_channel_id) ||
+                                   channel.type === 4; // 保留所有分类，后面会过滤空分类
+                        });
+                    }
+                    
                     // 首先按照 parent_id 分组
                     const groups = {};
                     const uncategorized = [];
                     
                     // 找出所有分类（包括Discord原生分类和分隔符分类）
-                    this.channels.forEach(channel => {
+                    channelsToGroup.forEach(channel => {
                         if (channel.type === 4 && channel.is_active !== false) { // 分类类型且未被禁用
                             groups[channel.platform_channel_id] = {
                                 id: channel.platform_channel_id,
@@ -733,7 +885,7 @@
                     
                     // 找出所有论坛频道
                     const forumChannels = {};
-                    this.channels.forEach(channel => {
+                    channelsToGroup.forEach(channel => {
                         if (channel.type === 15 && channel.is_active !== false) { // 论坛频道类型且未被禁用
                             forumChannels[channel.platform_channel_id] = {
                                 id: channel.platform_channel_id,
@@ -745,7 +897,7 @@
                     });
                     
                     // 将频道分配到对应的分类中
-                    this.channels.forEach(channel => {
+                    channelsToGroup.forEach(channel => {
                         // 跳过分类本身或已禁用的频道
                         if (channel.type === 4 || channel.is_active === false) {
                             return;
@@ -775,6 +927,28 @@
                         }
                     });
                     
+                    // 过滤掉没有线程的论坛频道（如果有搜索条件）
+                    if (hasSearch) {
+                        Object.values(groups).forEach(group => {
+                            group.channels = group.channels.filter(channel => {
+                                if (channel.threads) {
+                                    return channel.threads.length > 0;
+                                }
+                                return true;
+                            });
+                        });
+                        
+                        // 对于未分类的论坛频道也进行同样处理
+                        const filteredUncategorized = uncategorized.filter(channel => {
+                            if (channel.threads) {
+                                return channel.threads.length > 0;
+                            }
+                            return true;
+                        });
+                        uncategorized.length = 0;
+                        uncategorized.push(...filteredUncategorized);
+                    }
+                    
                     // 对每个分类中的频道按位置排序
                     Object.values(groups).forEach(group => {
                         group.channels.sort((a, b) => (a.position || 0) - (b.position || 0));
@@ -787,6 +961,7 @@
                     
                     // 创建结果数组，包括分类和未分类的频道
                     const result = Object.values(groups)
+                        .filter(group => group.channels.length > 0) // 只显示有频道的分类
                         .sort((a, b) => (a.position || 0) - (b.position || 0));
                     
                     if (uncategorized.length > 0) {
@@ -831,7 +1006,13 @@
                         this.loading = true;
                         const page = loadMore ? this.currentPage + 1 : 1;
                         
-                        const response = await fetch(`/api/messages?channel_id=${channel.platform_channel_id}&page=${page}&per_page=20`);
+                        // 构建查询参数
+                        let url = `/api/messages?channel_id=${channel.platform_channel_id}&page=${page}&per_page=20`;
+                        if (this.messageSearch) {
+                            url += `&search=${encodeURIComponent(this.messageSearch)}`;
+                        }
+                        
+                        const response = await fetch(url);
                         const data = await response.json();
                         
                         if (response.ok && data.messages) {
@@ -842,6 +1023,11 @@
                             } else {
                                 this.messages = data.messages;
                                 this.currentPage = 1;
+                                // 保存搜索结果信息
+                                this.searchResults = {
+                                    search_term: data.search_term,
+                                    total_found: data.total_found
+                                };
                             }
                             
                             this.hasMore = data.messages.length === 20;
@@ -961,6 +1147,8 @@
                     this.messages = [];
                     this.currentPage = 1;
                     this.hasMore = true;
+                    this.messageSearch = ''; // 清空消息搜索
+                    this.searchResults = null; // 清空搜索结果
                     
                     await this.loadMessages(channel);
                     // 先标记为已读，再获取最新的未读计数
@@ -1510,6 +1698,108 @@
                         this.isSyncing = false;
                     }
                 },
+                onMessageSearchChange() {
+                    // 清除之前的搜索定时器
+                    if (this.searchTimeout) {
+                        clearTimeout(this.searchTimeout);
+                    }
+                    
+                    // 设置新的搜索定时器，防抖300ms
+                    this.searchTimeout = setTimeout(async () => {
+                        if (this.selectedChannel) {
+                            // 重置分页状态
+                            this.currentPage = 1;
+                            this.hasMore = true;
+                            
+                            // 重新加载消息
+                            await this.loadMessages(this.selectedChannel);
+                        }
+                    }, 300);
+                },
+                clearMessageSearch() {
+                    this.messageSearch = '';
+                    this.searchResults = null;
+                    if (this.selectedChannel) {
+                        this.onMessageSearchChange();
+                    }
+                },
+                onGlobalSearchChange() {
+                    // 清除之前的搜索定时器
+                    if (this.globalSearchTimeout) {
+                        clearTimeout(this.globalSearchTimeout);
+                    }
+                    
+                    // 如果搜索框为空，隐藏全局搜索结果
+                    if (!this.globalSearch) {
+                        this.showGlobalSearchResults = false;
+                        this.globalSearchResults = [];
+                    }
+                },
+                async performGlobalSearch() {
+                    if (!this.globalSearch || this.globalSearch.trim().length < 1) {
+                        this.$notify.warning({
+                            title: '警告',
+                            message: '请输入搜索关键词',
+                            duration: 2000
+                        });
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/api/messages/search?search=${encodeURIComponent(this.globalSearch)}&page=1&per_page=50`);
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.globalSearchResults = data.messages;
+                            this.showGlobalSearchResults = true;
+                            
+                            if (data.messages.length === 0) {
+                                this.$notify.info({
+                                    title: '搜索结果',
+                                    message: '没有找到匹配的消息',
+                                    duration: 2000
+                                });
+                            } else {
+                                this.$notify.success({
+                                    title: '搜索完成',
+                                    message: `找到 ${data.total_found} 条消息`,
+                                    duration: 2000
+                                });
+                            }
+                        } else {
+                            throw new Error(data.detail || '搜索失败');
+                        }
+                    } catch (error) {
+                        this.$notify.error({
+                            title: '错误',
+                            message: '搜索失败: ' + error.message,
+                            duration: 2000
+                        });
+                    }
+                },
+                clearGlobalSearch() {
+                    this.globalSearch = '';
+                    this.showGlobalSearchResults = false;
+                    this.globalSearchResults = [];
+                },
+                navigateToMessage(message) {
+                    // 根据频道ID找到对应的频道
+                    const channel = this.channels.find(c => c.platform_channel_id === message.channel_id);
+                    if (channel) {
+                        this.selectChannel(channel);
+                        this.showGlobalSearchResults = false;
+                        
+                        // 设置消息搜索为匹配的内容，这样用户可以看到高亮
+                        this.messageSearch = this.globalSearch;
+                        this.onMessageSearchChange();
+                    }
+                },
+                highlightSearchTerm(text, searchTerm) {
+                    if (!text || !searchTerm) return text;
+                    
+                    const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                    return text.replace(regex, '<mark style="background-color: #ffeb3b; padding: 1px 2px;">$1</mark>');
+                },
             },
             watch: {
                 selectedTimezone() {
@@ -1553,4 +1843,4 @@
     </script>
     <script src="{{ url_for('static', path='js/logger.js') }}"></script>
 </body>
-</html> 
+</html>
