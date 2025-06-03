@@ -1,85 +1,391 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Messages</title>
+    <title>AI消息处理中心</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', path='favicon.ico') }}">
     <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .ai-processing-center {
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: white;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #e4e7ed;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .connection-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-left: 12px;
+        }
+        
+        .connection-status.connected {
+            background-color: #f0f9eb;
+            color: #67c23a;
+        }
+        
+        .connection-status.disconnected {
+            background-color: #fef0f0;
+            color: #f56c6c;
+        }
+        
+        .status-panel {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-card.success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        
+        .stat-card.warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        .stat-card.info {
+            background: linear-gradient(135deg, #96deda 0%, #50c9c3 100%);
+        }
+        
+        .message-item {
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .message-item:hover {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+        
+        .message-header {
+            padding: 1rem;
+            background: #fafbfc;
+            border-bottom: 1px solid #e4e7ed;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .message-content {
+            padding: 1rem;
+        }
+        
+        .ai-analysis {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+            border-left: 4px solid #409eff;
+        }
+        
+        .analysis-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0.5rem 0;
+        }
+        
+        .priority-badge {
+            font-weight: bold;
+        }
+        
+        .priority-1 { color: #909399; }
+        .priority-2 { color: #606266; }
+        .priority-3 { color: #409eff; }
+        .priority-4 { color: #e6a23c; }
+        .priority-5 { color: #f56c6c; }
+        
+        .config-section {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .config-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+        
+        .filter-bar {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .filter-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .message-list {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        
+        .trading-signal {
+            background: #fff8e1;
+            border: 1px solid #ffd54f;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .high-priority-alert {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(244, 67, 54, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
+        }
+        
+        .sentiment-positive { color: #67c23a; }
+        .sentiment-negative { color: #f56c6c; }
+        .sentiment-neutral { color: #909399; }
+        
+        .quote-box {
+            background-color: #f5f7fa;
+            border-left: 4px solid #dcdfe6;
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            color: #606266;
+        }
+    </style>
 </head>
-<body>
+<body class="ai-processing-center">
     <div id="app">
+        <!-- 头部 -->
         <div class="header">
-            <div class="header-left">
-                <h1>AI Messages</h1>
-                <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
-                    <i class="el-icon-connection"></i>
-                    <span v-text="isConnected ? '已连接' : '未连接'"></span>
-                </div>
-            </div>
-            <div class="header-right">
-                <a href="/" class="btn btn-outline-primary">返回频道列表</a>
-            </div>
-        </div>
-
-        <div class="container-fluid">
-            <div class="card">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">转发的消息</h5>
-                        <button class="btn btn-outline-secondary btn-sm" @click="clearMessages">
-                            <i class="el-icon-delete"></i>
-                            清空消息
-                        </button>
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <h2 class="mb-0">AI消息处理中心</h2>
+                    <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
+                        <i class="el-icon-connection"></i>
+                        <span v-text="isConnected ? '已连接' : '未连接'"></span>
                     </div>
                 </div>
-                <div class="card-body message-list" ref="messageList">
-                    <div v-for="message in messages" :key="message.id" class="message-item">
-                        <div class="message-header">
-                            <div class="message-info">
-                                <span class="channel-name">[{% raw %}{{ message.channel_name }}{% endraw %}]</span>
-                                <span class="time">{% raw %}{{ formatDate(message.created_at) }}{% endraw %} (本地)</span>
-                                <span class="time">{% raw %}{{ formatUTCDate(message.created_at) }}{% endraw %}</span>
-                                <span class="original-time" v-if="message.showDetails">(原始: {% raw %}{{ message.created_at }}{% endraw %})</span>
-                            </div>
-                        </div>
-                        <div class="message-content">
-                            <div class="text-content" v-if="message.content">{% raw %}{{ message.content }}{% endraw %}</div>
-                            <div class="referenced-content" v-if="message.referenced_content">
-                                <div class="quote-box">
-                                    {% raw %}{{ message.referenced_content }}{% endraw %}
-                                </div>
-                            </div>
-                            <div v-if="message.attachments && message.attachments.length > 0" class="attachments">
-                                <div v-for="attachment in message.attachments" :key="attachment.id" class="attachment">
-                                    <img :src="attachment.url"
-                                         :alt="attachment.filename"
-                                         class="attachment-image"
-                                         @click="showImagePreview(attachment)">
-                                </div>
-                            </div>
-                            <div class="message-details">
-                                <el-button type="text" size="small" @click="message.showDetails = !message.showDetails"
-                                    v-text="message.showDetails ? '隐藏详情' : '显示详情'">
-                                </el-button>
-                                <div v-show="message.showDetails" class="details-content">
-                                    <pre>{% raw %}{{ JSON.stringify(message, null, 2) }}{% endraw %}</pre>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div v-if="messages.length === 0" class="text-center text-muted mt-4">
-                        暂无转发消息
-                    </div>
+                <div>
+                    <el-button @click="showConfig = !showConfig" type="primary">
+                        <i class="el-icon-setting"></i> 配置管理
+                    </el-button>
+                    <a href="/" class="btn btn-outline-secondary">返回首页</a>
                 </div>
             </div>
         </div>
 
-        <el-dialog :visible.sync="imagePreviewVisible" :append-to-body="true" class="image-preview-dialog">
-            <img :src="previewImageUrl" class="preview-image" alt="Preview" />
-        </el-dialog>
+        <div class="container-fluid p-3">
+            <!-- 高优先级警报 -->
+            <div v-for="alert in highPriorityAlerts" :key="'alert-' + alert.ai_message_id" 
+                 class="high-priority-alert">
+                <h6><i class="el-icon-warning"></i> 高优先级交易信号</h6>
+                <p><strong>频道:</strong> {% raw %}{{ alert.channel_name }}{% endraw %}</p>
+                <p><strong>分类:</strong> {% raw %}{{ alert.category }}{% endraw %} | <strong>紧急程度:</strong> {% raw %}{{ alert.urgency }}{% endraw %}</p>
+                <p><strong>摘要:</strong> {% raw %}{{ alert.summary }}{% endraw %}</p>
+                <div v-if="alert.trading_signal">
+                    <strong>交易信号:</strong> {% raw %}{{ JSON.stringify(alert.trading_signal, null, 2) }}{% endraw %}
+                </div>
+            </div>
+
+            <!-- 状态面板 -->
+            <div class="status-panel">
+                <h5>处理状态</h5>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>{% raw %}{{ processingStats.total_processed || 0 }}{% endraw %}</h4>
+                        <p>总处理数</p>
+                    </div>
+                    <div class="stat-card success">
+                        <h4>{% raw %}{{ processingStats.successful || 0 }}{% endraw %}</h4>
+                        <p>成功处理</p>
+                    </div>
+                    <div class="stat-card warning">
+                        <h4>{% raw %}{{ processingStats.failed || 0 }}{% endraw %}</h4>
+                        <p>处理失败</p>
+                    </div>
+                    <div class="stat-card info">
+                        <h4>{% raw %}{{ processingStats.queue_size || 0 }}{% endraw %}</h4>
+                        <p>队列中</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>{% raw %}{{ processingStats.active_workers || 0 }}{% endraw %}</h4>
+                        <p>活跃工作器</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 配置管理 -->
+            <div v-show="showConfig" class="config-section">
+                <h5>AI处理器配置</h5>
+                <div class="config-form">
+                    <el-form-item label="最大并发工作器">
+                        <el-input-number v-model="config.max_workers" :min="1" :max="20"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="最大批处理大小">
+                        <el-input-number v-model="config.max_batch_size" :min="1" :max="100"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="处理超时时间(秒)">
+                        <el-input-number v-model="config.processing_timeout" :min="10" :max="300"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="队列最大大小">
+                        <el-input-number v-model="config.queue_max_size" :min="100" :max="5000"></el-input-number>
+                    </el-form-item>
+                </div>
+                <div class="mt-3">
+                    <el-button @click="updateConfig" type="primary">保存配置</el-button>
+                    <el-button @click="loadConfig" type="default">重新加载</el-button>
+                    <el-button @click="reprocessFailed" type="warning">重新处理失败消息</el-button>
+                    <el-button @click="clearQueue" type="danger">清空队列</el-button>
+                </div>
+            </div>
+
+            <!-- 筛选栏 -->
+            <div class="filter-bar">
+                <div class="filter-controls">
+                    <el-select v-model="filter.tradingRelated" placeholder="交易相关" clearable>
+                        <el-option label="仅交易相关" :value="true"></el-option>
+                        <el-option label="非交易相关" :value="false"></el-option>
+                    </el-select>
+                    <el-select v-model="filter.priority" placeholder="优先级" clearable>
+                        <el-option label="优先级 ≥ 4" :value="4"></el-option>
+                        <el-option label="优先级 ≥ 3" :value="3"></el-option>
+                        <el-option label="优先级 ≥ 2" :value="2"></el-option>
+                    </el-select>
+                    <el-input v-model="filter.category" placeholder="分类筛选" clearable style="width: 150px;"></el-input>
+                    <el-button @click="refreshMessages" type="primary">刷新数据</el-button>
+                    <el-button @click="clearMessages">清空显示</el-button>
+                </div>
+            </div>
+
+            <!-- 消息列表 -->
+            <div class="message-list">
+                <div v-for="message in filteredMessages" :key="message.id" class="message-item">
+                    <div class="message-header">
+                        <div>
+                            <span class="badge bg-primary">{% raw %}{{ message.channel_name }}{% endraw %}</span>
+                            <span class="text-muted ms-2">{% raw %}{{ formatDate(message.timestamp) }}{% endraw %}</span>
+                            <span v-if="message.ai_analysis" 
+                                  class="priority-badge ms-2"
+                                  :class="'priority-' + message.ai_analysis.priority">
+                                优先级: {% raw %}{{ message.ai_analysis.priority }}{% endraw %}
+                            </span>
+                        </div>
+                        <div>
+                            <el-tag v-if="message.status === 'queued_for_processing'" type="info">处理中</el-tag>
+                            <el-tag v-else-if="message.ai_analysis" type="success">已分析</el-tag>
+                            <el-tag v-else type="warning">待处理</el-tag>
+                        </div>
+                    </div>
+                    
+                    <div class="message-content">
+                        <!-- 原始消息内容 -->
+                        <div class="mb-3">
+                            <h6>消息内容:</h6>
+                            <p class="mb-2">{% raw %}{{ message.content || message.original_message?.content }}{% endraw %}</p>
+                            
+                            <!-- 引用内容 -->
+                            <div v-if="message.original_message?.referenced_content" class="quote-box mb-2">
+                                <small>引用: {% raw %}{{ message.original_message.referenced_content }}{% endraw %}</small>
+                            </div>
+                            
+                            <!-- 附件 -->
+                            <div v-if="message.original_message?.attachments?.length" class="mb-2">
+                                <small class="text-muted">附件: {% raw %}{{ message.original_message.attachments.length }}{% endraw %} 个</small>
+                            </div>
+                        </div>
+                        
+                        <!-- AI分析结果 -->
+                        <div v-if="message.ai_analysis" class="ai-analysis">
+                            <h6><i class="el-icon-cpu"></i> AI分析结果</h6>
+                            
+                            <div class="analysis-tags">
+                                <el-tag v-if="message.ai_analysis.is_trading_related" type="success">交易相关</el-tag>
+                                <el-tag v-if="message.ai_analysis.category">{% raw %}{{ message.ai_analysis.category }}{% endraw %}</el-tag>
+                                <el-tag v-if="message.ai_analysis.urgency" 
+                                        :type="message.ai_analysis.urgency === '高' ? 'danger' : 
+                                               message.ai_analysis.urgency === '中' ? 'warning' : 'info'">
+                                    {% raw %}{{ message.ai_analysis.urgency }}{% endraw %}
+                                </el-tag>
+                                <el-tag v-if="message.ai_analysis.sentiment" 
+                                        :class="'sentiment-' + (message.ai_analysis.sentiment === '积极' ? 'positive' : 
+                                                               message.ai_analysis.sentiment === '消极' ? 'negative' : 'neutral')">
+                                    {% raw %}{{ message.ai_analysis.sentiment }}{% endraw %}
+                                </el-tag>
+                                <el-tag v-if="message.ai_analysis.confidence">
+                                    置信度: {% raw %}{{ (message.ai_analysis.confidence * 100).toFixed(1) }}{% endraw %}%
+                                </el-tag>
+                            </div>
+                            
+                            <div v-if="message.ai_analysis.keywords?.length" class="mt-2">
+                                <strong>关键词:</strong>
+                                <el-tag v-for="keyword in message.ai_analysis.keywords" 
+                                        :key="keyword" size="mini" class="ms-1">{% raw %}{{ keyword }}{% endraw %}</el-tag>
+                            </div>
+                            
+                            <div v-if="message.ai_analysis.summary" class="mt-2">
+                                <strong>摘要:</strong> {% raw %}{{ message.ai_analysis.summary }}{% endraw %}
+                            </div>
+                            
+                            <!-- 交易信号 -->
+                            <div v-if="message.ai_analysis.has_trading_signal && message.ai_analysis.trading_signal" 
+                                 class="trading-signal">
+                                <h6><i class="el-icon-money"></i> 交易信号</h6>
+                                <pre>{% raw %}{{ JSON.stringify(message.ai_analysis.trading_signal, null, 2) }}{% endraw %}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div v-if="filteredMessages.length === 0" class="text-center text-muted mt-4">
+                    <i class="el-icon-document-remove" style="font-size: 64px;"></i>
+                    <p class="mt-2">暂无消息数据</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
@@ -91,8 +397,45 @@
                 messages: [],
                 isConnected: false,
                 ws: null,
-                imagePreviewVisible: false,
-                previewImageUrl: ''
+                showConfig: false,
+                processingStats: {},
+                highPriorityAlerts: [],
+                config: {
+                    max_workers: 5,
+                    max_batch_size: 20,
+                    processing_timeout: 30,
+                    queue_max_size: 1000
+                },
+                filter: {
+                    tradingRelated: null,
+                    priority: null,
+                    category: null
+                }
+            },
+            computed: {
+                filteredMessages() {
+                    let filtered = this.messages;
+                    
+                    if (this.filter.tradingRelated !== null) {
+                        filtered = filtered.filter(msg => 
+                            msg.ai_analysis?.is_trading_related === this.filter.tradingRelated
+                        );
+                    }
+                    
+                    if (this.filter.priority !== null) {
+                        filtered = filtered.filter(msg => 
+                            msg.ai_analysis?.priority >= this.filter.priority
+                        );
+                    }
+                    
+                    if (this.filter.category) {
+                        filtered = filtered.filter(msg => 
+                            msg.ai_analysis?.category?.includes(this.filter.category)
+                        );
+                    }
+                    
+                    return filtered;
+                }
             },
             methods: {
                 setupWebSocket() {
@@ -102,9 +445,8 @@
                         this.isConnected = true;
                         this.$notify({
                             title: '连接成功',
-                            message: '已连接到服务器',
-                            type: 'success',
-                            duration: 2000
+                            message: 'AI处理器连接已建立',
+                            type: 'success'
                         });
                     };
                     
@@ -114,61 +456,174 @@
                     };
                     
                     this.ws.onmessage = (event) => {
-                        const message = JSON.parse(event.data);
-                        message.showDetails = false;
-                        this.messages.unshift(message);
+                        const data = JSON.parse(event.data);
+                        this.handleWebSocketMessage(data);
                     };
                 },
+                
+                handleWebSocketMessage(data) {
+                    if (data.type === 'new_ai_message') {
+                        // 新消息加入处理队列
+                        const message = {
+                            id: data.ai_message_id,
+                            content: data.original_message.content,
+                            channel_name: data.original_message.channel_name,
+                            original_message: data.original_message,
+                            status: data.status,
+                            timestamp: data.timestamp,
+                            ai_analysis: null
+                        };
+                        this.messages.unshift(message);
+                    } else if (data.type === 'ai_analysis_result') {
+                        // AI分析结果
+                        const messageIndex = this.messages.findIndex(m => m.id === data.ai_message_id);
+                        if (messageIndex !== -1) {
+                            this.$set(this.messages[messageIndex], 'ai_analysis', data.analysis);
+                            this.$set(this.messages[messageIndex], 'status', 'completed');
+                        }
+                    } else if (data.type === 'high_priority_alert') {
+                        // 高优先级警报
+                        this.highPriorityAlerts.unshift(data);
+                        setTimeout(() => {
+                            const index = this.highPriorityAlerts.findIndex(a => a.ai_message_id === data.ai_message_id);
+                            if (index !== -1) this.highPriorityAlerts.splice(index, 1);
+                        }, 30000); // 30秒后自动消失
+                        
+                        this.$notify({
+                            title: '高优先级交易信号',
+                            message: `频道: ${data.channel_name} - ${data.summary}`,
+                            type: 'warning',
+                            duration: 10000
+                        });
+                    }
+                    
+                    // 限制消息数量
+                    if (this.messages.length > 200) {
+                        this.messages = this.messages.slice(0, 100);
+                    }
+                },
+                
+                async loadConfig() {
+                    try {
+                        const response = await fetch('/api/ai/config');
+                        const data = await response.json();
+                        this.config = data;
+                    } catch (error) {
+                        this.$message.error('加载配置失败: ' + error.message);
+                    }
+                },
+                
+                async updateConfig() {
+                    try {
+                        const response = await fetch('/api/ai/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.config)
+                        });
+                        const result = await response.json();
+                        this.$message.success('配置更新成功');
+                    } catch (error) {
+                        this.$message.error('更新配置失败: ' + error.message);
+                    }
+                },
+                
+                async loadProcessingStats() {
+                    try {
+                        const response = await fetch('/api/ai/status');
+                        const data = await response.json();
+                        this.processingStats = data.processor_stats || {};
+                    } catch (error) {
+                        console.error('加载状态失败:', error);
+                    }
+                },
+                
+                async refreshMessages() {
+                    try {
+                        const response = await fetch('/api/ai/messages?size=50');
+                        const data = await response.json();
+                        this.messages = data.data.map(msg => ({
+                            id: msg.id,
+                            content: msg.content,
+                            channel_name: msg.channel_name,
+                            timestamp: msg.created_at,
+                            ai_analysis: {
+                                is_trading_related: msg.is_trading_related,
+                                priority: msg.priority,
+                                keywords: msg.keywords,
+                                category: msg.category,
+                                urgency: msg.urgency,
+                                sentiment: msg.sentiment,
+                                confidence: msg.confidence,
+                                summary: msg.summary,
+                                has_trading_signal: msg.has_trading_signal,
+                                trading_signal: msg.trading_signal
+                            }
+                        }));
+                    } catch (error) {
+                        this.$message.error('刷新数据失败: ' + error.message);
+                    }
+                },
+                
+                async reprocessFailed() {
+                    try {
+                        const response = await fetch('/api/ai/reprocess-failed', { method: 'POST' });
+                        const result = await response.json();
+                        this.$message.success(result.message);
+                    } catch (error) {
+                        this.$message.error('重新处理失败: ' + error.message);
+                    }
+                },
+                
+                async clearQueue() {
+                    this.$confirm('确定要清空处理队列吗？', '警告', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(async () => {
+                        try {
+                            await fetch('/api/ai/clear-queue', { method: 'POST' });
+                            this.$message.success('队列已清空');
+                        } catch (error) {
+                            this.$message.error('清空队列失败: ' + error.message);
+                        }
+                    });
+                },
+                
+                clearMessages() {
+                    if (confirm('确定要清空所有显示的消息吗？')) {
+                        this.messages = [];
+                        this.highPriorityAlerts = [];
+                    }
+                },
+                
                 formatDate(dateString) {
                     try {
                         const date = new Date(dateString);
-                        const timezone = localStorage.getItem('selectedTimezone') || 'UTC';
-                        return date.toLocaleString('en-US', {
+                        return date.toLocaleString('zh-CN', {
                             year: 'numeric',
                             month: '2-digit',
                             day: '2-digit',
                             hour: '2-digit',
                             minute: '2-digit',
-                            second: '2-digit',
-                            hour12: false,
-                            timeZone: timezone === 'local' ? undefined : timezone
+                            second: '2-digit'
                         });
                     } catch (e) {
-                        console.error('Error formatting date:', e);
                         return dateString;
-                    }
-                },
-                formatUTCDate(dateString) {
-                    try {
-                        const date = new Date(dateString);
-                        return date.toLocaleString('en-US', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                            hour12: false,
-                            timeZone: 'UTC'
-                        }) + ' UTC';
-                    } catch (e) {
-                        console.error('Error formatting UTC date:', e);
-                        return dateString;
-                    }
-                },
-                showImagePreview(attachment) {
-                    this.previewImageUrl = attachment.url;
-                    this.imagePreviewVisible = true;
-                },
-                clearMessages() {
-                    if (confirm('确定要清空所有消息吗？')) {
-                        this.messages = [];
                     }
                 }
             },
-            created() {
+            
+            async created() {
                 this.setupWebSocket();
+                await this.loadConfig();
+                await this.refreshMessages();
+                
+                // 定期更新状态
+                setInterval(() => {
+                    this.loadProcessingStats();
+                }, 5000);
             },
+            
             beforeDestroy() {
                 if (this.ws) {
                     this.ws.close();
@@ -176,150 +631,5 @@
             }
         });
     </script>
-
-    <style>
-    .message-item {
-        margin-bottom: 1rem;
-        padding: 1rem;
-        border: 1px solid #e4e7ed;
-        border-radius: 4px;
-    }
-
-    .message-header {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 0.5rem;
-    }
-
-    .message-info {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .channel-name {
-        color: #409EFF;
-        font-weight: 500;
-    }
-
-    .time {
-        color: #909399;
-        font-size: 0.9em;
-    }
-
-    .text-content {
-        margin-bottom: 0.5rem;
-        white-space: pre-wrap;
-    }
-
-    .quote-box {
-        background-color: #f5f7fa;
-        border-left: 4px solid #dcdfe6;
-        padding: 0.5rem;
-        margin: 0.5rem 0;
-        color: #606266;
-    }
-
-    .attachments {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 0.5rem;
-    }
-
-    .attachment-image {
-        max-width: 200px;
-        max-height: 200px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: transform 0.2s;
-    }
-
-    .attachment-image:hover {
-        transform: scale(1.05);
-    }
-
-    .message-list {
-        max-height: calc(100vh - 200px);
-        overflow-y: auto;
-    }
-
-    .image-preview-dialog {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .preview-image {
-        max-width: 90vw;
-        max-height: 90vh;
-        object-fit: contain;
-    }
-
-    .connection-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 14px;
-        margin-left: 12px;
-    }
-
-    .connection-status.connected {
-        background-color: #f0f9eb;
-        color: #67c23a;
-    }
-
-    .connection-status.disconnected {
-        background-color: #fef0f0;
-        color: #f56c6c;
-    }
-
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1rem;
-        background-color: #fff;
-        border-bottom: 1px solid #e4e7ed;
-    }
-
-    .header-left {
-        display: flex;
-        align-items: center;
-    }
-
-    .header-left h1 {
-        margin: 0;
-        font-size: 1.5rem;
-    }
-
-    .message-details {
-        margin-top: 1rem;
-        border-top: 1px solid #ebeef5;
-        padding-top: 0.5rem;
-    }
-
-    .details-content {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 4px;
-        margin-top: 0.5rem;
-        overflow-x: auto;
-    }
-
-    .details-content pre {
-        margin: 0;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
-
-    .original-time {
-        color: #909399;
-        font-size: 0.8em;
-        font-family: monospace;
-    }
-    </style>
 </body>
 </html> 
