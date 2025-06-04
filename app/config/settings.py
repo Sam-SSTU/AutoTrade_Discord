@@ -27,10 +27,10 @@ class Settings(BaseSettings):
     use_openai_proxy: bool = Field(default=False, env="USE_OPENAI_PROXY")
     
     # AI处理配置
-    ai_max_concurrent_workers: int = Field(default=5, env="AI_MAX_CONCURRENT_WORKERS")  # 最大并发工作器数量
+    ai_max_concurrent_workers: int = Field(default=10, env="AI_MAX_CONCURRENT_WORKERS")  # 最大并发工作器数量
     ai_max_batch_size: int = Field(default=20, env="AI_MAX_BATCH_SIZE")  # 一次处理的最大消息数
-    ai_request_rate_limit: int = Field(default=10, env="AI_REQUEST_RATE_LIMIT")  # 每分钟最大API请求数
-    ai_queue_max_size: int = Field(default=1000, env="AI_QUEUE_MAX_SIZE")  # 队列最大大小
+    ai_request_rate_limit: int = Field(default=60, env="AI_REQUEST_RATE_LIMIT")  # 每分钟最大API请求数
+    ai_queue_max_size: int = Field(default=2000, env="AI_QUEUE_MAX_SIZE")  # 队列最大大小
     ai_processing_timeout: int = Field(default=30, env="AI_PROCESSING_TIMEOUT")  # 处理超时时间(秒)
     
     # Redis配置
@@ -62,9 +62,13 @@ class Settings(BaseSettings):
 # 全局设置实例
 _settings = None
 
-def get_settings() -> Settings:
+def get_settings(reload: bool = False) -> Settings:
     """获取设置单例"""
     global _settings
-    if _settings is None:
+    if _settings is None or reload:
         _settings = Settings()
-    return _settings 
+    return _settings
+
+def reload_settings() -> Settings:
+    """强制重新加载配置"""
+    return get_settings(reload=True) 

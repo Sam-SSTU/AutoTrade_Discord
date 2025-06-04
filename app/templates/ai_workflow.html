@@ -420,6 +420,64 @@
         // 格式化JSON显示
         function formatJson(data) {
             if (!data) return '<span class="text-muted">无数据</span>';
+            
+            // 特殊处理上下文消息
+            if (data.context_messages && Array.isArray(data.context_messages)) {
+                let html = '<div><strong>上下文消息 (' + data.context_messages.length + ' 条):</strong></div>';
+                html += '<div class="mt-2">';
+                data.context_messages.forEach((msg, index) => {
+                    html += `<div class="border-start border-3 border-primary ps-2 mb-2">
+                        <div class="small text-muted">消息 ${index + 1}:</div>
+                        <div class="bg-light p-2 rounded">${msg}</div>
+                    </div>`;
+                });
+                html += '</div>';
+                
+                // 显示上下文图片
+                if (data.context_attachments && Array.isArray(data.context_attachments)) {
+                    html += '<div class="mt-3"><strong>上下文图片 (' + data.context_attachments.length + ' 张):</strong></div>';
+                    html += '<div class="mt-2 row">';
+                    data.context_attachments.forEach((att, index) => {
+                        html += `<div class="col-md-6 mb-2">
+                            <div class="border rounded p-2 bg-light">
+                                <div class="small text-muted">图片 ${index + 1}:</div>
+                                <div><strong>文件名:</strong> ${att.filename || '未知'}</div>
+                                <div><strong>类型:</strong> ${att.content_type || '未知'}</div>
+                                <div><strong>大小:</strong> ${att.size || 0} bytes</div>
+                                <div><strong>来源消息:</strong> ${att.message_content || '[图片消息]'}</div>
+                            </div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+                
+                // 显示其他数据
+                const otherData = {...data};
+                delete otherData.context_messages;
+                delete otherData.context_attachments;
+                if (Object.keys(otherData).length > 0) {
+                    html += '<div class="mt-3"><strong>其他数据:</strong></div>';
+                    html += '<pre class="mt-2">' + JSON.stringify(otherData, null, 2) + '</pre>';
+                }
+                
+                return html;
+            }
+            
+            // 特殊处理引用内容
+            if (data.referenced_content) {
+                let html = '<div><strong>引用消息:</strong></div>';
+                html += `<div class="border rounded p-2 bg-light mt-2">${data.referenced_content}</div>`;
+                
+                const otherData = {...data};
+                delete otherData.referenced_content;
+                if (Object.keys(otherData).length > 0) {
+                    html += '<div class="mt-3"><strong>其他数据:</strong></div>';
+                    html += '<pre class="mt-2">' + JSON.stringify(otherData, null, 2) + '</pre>';
+                }
+                
+                return html;
+            }
+            
             return '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
         }
     </script>

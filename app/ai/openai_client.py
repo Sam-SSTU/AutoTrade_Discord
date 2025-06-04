@@ -70,14 +70,16 @@ class OpenAIClient:
         }
     
     async def analyze_message(self, message_content: str, context_messages: List[str] = None, 
+                       context_attachments: List[Dict[str, Any]] = None,
                        attachments: List[Dict[str, Any]] = None, referenced_content: str = None) -> Dict[str, Any]:
         """
-        使用GPT-4o分析单条消息，支持图片和引用内容
+        使用GPT-4o分析单条消息，支持图片和引用内容，以及上下文图片
         
         Args:
             message_content: 要分析的消息内容
             context_messages: 上下文消息列表
-            attachments: 附件列表，包含图片URL等信息
+            context_attachments: 上下文图片附件列表
+            attachments: 当前消息的附件列表，包含图片URL等信息
             referenced_content: 引用的消息内容
             
         Returns:
@@ -120,10 +122,17 @@ If images are included, analyze their content for charts, screenshots of trading
             if referenced_content:
                 user_message += f"\n\nReferenced message:\n{referenced_content}"
             
-            # 如果有上下文，添加上下文信息
+            # 如果有上下文，添加上下文信息 - 使用全部上下文消息
             if context_messages:
-                context_text = "\n".join(context_messages[-3:])  # 只取最近3条
-                user_message += f"\n\nContext messages:\n{context_text}"
+                context_text = "\n".join(context_messages)  # 使用全部上下文消息
+                user_message += f"\n\n=== 聊天上下文 ===\n以下是该频道最近的聊天记录，可以参考这些上下文信息来更好地理解当前消息的含义、背景和情绪：\n{context_text}"
+                
+                # 如果有上下文图片，也在提示词中说明
+                if context_attachments:
+                    context_image_count = len(context_attachments)
+                    user_message += f"\n\n=== 上下文图片 ===\n另外，聊天上文中还包含 {context_image_count} 张图片（图表、截图等），这些图片可能包含重要的市场信息、技术分析图表或交易相关内容，请一并参考分析。"
+                
+                user_message += f"\n=== 当前消息分析 ===\n请结合以上聊天上下文，分析当前消息的内容。"
             
             logger.info(f"正在调用OpenAI API: {self.base_url}")
             logger.debug(f"使用API Key: {self.api_key[:10]}...")  # 只显示前10个字符
@@ -158,7 +167,9 @@ If images are included, analyze their content for charts, screenshots of trading
                 
                 return False
             
-            has_images = attachments and any(is_image_attachment(att) for att in attachments)
+            # 检查是否有图片附件 - 包括当前消息和上下文图片
+            has_images = (attachments and any(is_image_attachment(att) for att in attachments)) or \
+                        (context_attachments and len(context_attachments) > 0)
             
             # 如果有图片附件，尝试使用多模态消息
             multimodal_messages = None
@@ -172,56 +183,88 @@ If images are included, analyze their content for charts, screenshots of trading
                 # 添加文本内容
                 user_content.append({"type": "text", "text": user_message})
                 
-                # 添加图片内容
-                image_count = 0
-                for att in attachments:
-                    if is_image_attachment(att):
-                        # 优先使用base64编码的data URL（如果存在）
-                        image_url = att.get('url')
-                        if image_url:
-                            # 检查是否已经是data URL格式
-                            if image_url.startswith('data:'):
-                                # 已经是base64 data URL，直接使用
-                                full_url = image_url
-                                logger.info(f"使用base64 data URL: {image_url[:50]}...")
-                            else:
-                                # 如果不是data URL，尝试从附件数据构建base64 URL
-                                file_data = att.get('file_data')
-                                content_type = att.get('content_type', 'image/png')
-                                
-                                if file_data:
-                                    import base64
-                                    try:
-                                        # 如果file_data是bytes，直接编码
-                                        if isinstance(file_data, bytes):
-                                            base64_data = base64.b64encode(file_data).decode('utf-8')
-                                        else:
-                                            # 如果是其他格式，先转换为bytes
-                                            base64_data = base64.b64encode(str(file_data).encode('utf-8')).decode('utf-8')
-                                        
-                                        full_url = f"data:{content_type};base64,{base64_data}"
-                                        logger.info(f"从file_data构建base64 URL，大小: {len(base64_data)} 字符")
-                                    except Exception as e:
-                                        logger.error(f"构建base64 URL失败: {str(e)}")
-                                        continue
-                                else:
-                                    # 如果没有file_data，跳过这个附件（避免使用无法访问的localhost URL）
-                                    logger.warning(f"附件 {att.get('filename', 'unknown')} 没有file_data，跳过")
-                                    continue
+                # 添加上下文图片 - 优先处理上下文图片
+                context_image_count = 0
+                if context_attachments:
+                    for att in context_attachments:
+                        try:
+                            file_data = att.get('file_data')
+                            content_type = att.get('content_type', 'image/png')
                             
-                            user_content.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": full_url,
-                                    "detail": "low"  # 添加detail参数以控制处理精度
-                                }
-                            })
-                            image_count += 1
-                            logger.info(f"添加图片到分析: {att.get('filename', 'unknown')}")
+                            if file_data:
+                                import base64
+                                # 构建base64 URL
+                                if isinstance(file_data, bytes):
+                                    base64_data = base64.b64encode(file_data).decode('utf-8')
+                                else:
+                                    base64_data = base64.b64encode(str(file_data).encode('utf-8')).decode('utf-8')
+                                
+                                full_url = f"data:{content_type};base64,{base64_data}"
+                                
+                                user_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": full_url,
+                                        "detail": "low"  # 上下文图片使用低精度以节省token
+                                    }
+                                })
+                                context_image_count += 1
+                                logger.info(f"添加上下文图片到分析: {att.get('filename', 'unknown')} (来自消息 {att.get('message_id')})")
+                        except Exception as e:
+                            logger.error(f"处理上下文图片失败: {str(e)}")
+                            continue
+                
+                # 添加当前消息的图片内容
+                current_image_count = 0
+                if attachments:
+                    for att in attachments:
+                        if is_image_attachment(att):
+                            # 优先使用base64编码的data URL（如果存在）
+                            image_url = att.get('url')
+                            if image_url:
+                                # 检查是否已经是data URL格式
+                                if image_url.startswith('data:'):
+                                    # 已经是base64 data URL，直接使用
+                                    full_url = image_url
+                                    logger.info(f"使用base64 data URL: {image_url[:50]}...")
+                                else:
+                                    # 如果不是data URL，尝试从附件数据构建base64 URL
+                                    file_data = att.get('file_data')
+                                    content_type = att.get('content_type', 'image/png')
+                                    
+                                    if file_data:
+                                        import base64
+                                        try:
+                                            # 如果file_data是bytes，直接编码
+                                            if isinstance(file_data, bytes):
+                                                base64_data = base64.b64encode(file_data).decode('utf-8')
+                                            else:
+                                                # 如果是其他格式，先转换为bytes
+                                                base64_data = base64.b64encode(str(file_data).encode('utf-8')).decode('utf-8')
+                                            
+                                            full_url = f"data:{content_type};base64,{base64_data}"
+                                            logger.info(f"从file_data构建base64 URL，大小: {len(base64_data)} 字符")
+                                        except Exception as e:
+                                            logger.error(f"构建base64 URL失败: {str(e)}")
+                                            continue
+                                    else:
+                                        # 如果没有file_data，跳过这个附件（避免使用无法访问的localhost URL）
+                                        logger.warning(f"附件 {att.get('filename', 'unknown')} 没有file_data，跳过")
+                                        continue
+                                
+                                user_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": full_url,
+                                        "detail": "high"  # 当前消息图片使用高精度
+                                    }
+                                })
+                                current_image_count += 1
+                                logger.info(f"添加当前消息图片到分析: {att.get('filename', 'unknown')}")
                 
                 # 将多模态内容添加到消息列表
                 multimodal_messages.append({"role": "user", "content": user_content})
-                logger.info(f"准备使用多模态消息进行分析，包含 {image_count} 张图片")
+                logger.info(f"准备使用多模态消息进行分析，包含上下文图片 {context_image_count} 张，当前消息图片 {current_image_count} 张")
             
             # 调用API - 首先尝试使用多模态消息
             response = None

@@ -23,7 +23,7 @@ class MessagePreprocessor:
     
     def __init__(self):
         self.openai_client = get_openai_client()
-        self.max_context_messages = 10  # 最多获取10条历史消息
+        self.max_context_messages = 5  # 最多获取5条历史消息
         self.result_callback: Optional[Callable] = None  # 处理完成回调
         
     def set_result_callback(self, callback: Callable[[AIMessage], None]):
@@ -66,9 +66,10 @@ class MessagePreprocessor:
                     "max_context_messages": self.max_context_messages
                 }
             ) as context_step:
-                context_messages = await self._build_context(db, ai_message)
+                context_messages, context_attachments = await self._build_context(db, ai_message)
                 context_step.set_output({
                     "context_messages": context_messages,
+                    "context_attachments": context_attachments,
                     "context_count": len(context_messages),
                     "context_message_ids": ai_message.context_messages or []
                 })
@@ -157,13 +158,32 @@ class MessagePreprocessor:
                 input_data={
                     "message_content": ai_message.message_content,
                     "context_messages_count": len(context_messages),
+                    "context_messages": context_messages,
+                    "context_attachments_count": len(context_attachments),
+                    "context_attachments": [
+                        {
+                            "filename": att.get("filename"),
+                            "content_type": att.get("content_type"),
+                            "size": att.get("size", 0),
+                            "message_content": att.get("message_content")
+                        } for att in context_attachments
+                    ],
                     "has_attachments": attachments is not None and len(attachments) > 0,
-                    "has_referenced_content": referenced_content is not None
+                    "has_referenced_content": referenced_content is not None,
+                    "referenced_content": referenced_content,
+                    "attachments_info": [
+                        {
+                            "filename": att.get("filename"),
+                            "content_type": att.get("content_type"),
+                            "size": len(att.get("file_data", b"")) if att.get("file_data") else 0
+                        } for att in (attachments or [])
+                    ] if attachments else []
                 }
             ) as analysis_step:
                 analysis_result = await self.openai_client.analyze_message(
                     ai_message.message_content,
                     context_messages,
+                    context_attachments=context_attachments,  # 传入上下文图片
                     attachments=attachments,
                     referenced_content=referenced_content
                 )
@@ -220,7 +240,8 @@ class MessagePreprocessor:
                 input_data={
                     "analysis_result": analysis_result,
                     "trading_signal": trading_signal,
-                    "context_messages": context_messages
+                    "context_messages": context_messages,
+                    "context_attachments": context_attachments
                 }
             ) as update_step:
                 await self._update_ai_message(db, ai_message, analysis_result, trading_signal, context_messages)
@@ -231,7 +252,8 @@ class MessagePreprocessor:
                         "priority": analysis_result.get("priority"),
                         "category": analysis_result.get("category"),
                         "has_trading_signal": trading_signal is not None,
-                        "context_messages_count": len(context_messages)
+                        "context_messages_count": len(context_messages),
+                        "context_attachments_count": len(context_attachments)
                     }
                 })
             
@@ -250,10 +272,13 @@ class MessagePreprocessor:
             await self._handle_processing_error(db, ai_message, log, start_time, str(e))
             return False
     
-    async def _build_context(self, db: Session, ai_message: AIMessage) -> List[str]:
+    async def _build_context(self, db: Session, ai_message: AIMessage) -> tuple[List[str], List[Dict[str, Any]]]:
         """
         构建消息上下文
-        获取同一频道的最近历史消息
+        获取同一频道的最近历史消息，包括文本和图片附件
+        
+        Returns:
+            tuple: (context_messages: List[str], context_attachments: List[Dict])
         """
         try:
             # 获取同频道的最近消息
@@ -265,25 +290,47 @@ class MessagePreprocessor:
             ).order_by(desc(Message.created_at)).limit(self.max_context_messages).all()
             
             context_messages = []
+            context_attachments = []
             context_ids = []
             
             for msg in reversed(recent_messages):  # 按时间正序
-                # 包含所有消息内容，不再进行长度过滤
+                # 添加文本内容
                 if msg.content:
                     context_messages.append(msg.content)
                     context_ids.append(msg.id)
+                
+                # 添加图片附件信息
+                if hasattr(msg, 'attachments') and msg.attachments:
+                    for attachment in msg.attachments:
+                        # 只处理图片附件
+                        if attachment.content_type and attachment.content_type.startswith('image/'):
+                            try:
+                                context_attachments.append({
+                                    "id": attachment.id,
+                                    "filename": attachment.filename,
+                                    "content_type": attachment.content_type,
+                                    "file_data": attachment.file_data,
+                                    "url": f"/api/messages/attachments/{attachment.id}",
+                                    "message_content": msg.content or "[图片消息]",
+                                    "message_id": msg.id,
+                                    "size": len(attachment.file_data) if attachment.file_data else 0
+                                })
+                                logger.debug(f"添加上下文图片: {attachment.filename} (消息ID: {msg.id})")
+                            except Exception as e:
+                                logger.error(f"处理上下文图片附件失败: {str(e)}")
+                                continue
             
             # 保存上下文消息ID到AI消息记录
             if context_ids:
                 ai_message.context_messages = context_ids
                 db.commit()
             
-            logger.info(f"为消息 {ai_message.id} 构建了 {len(context_messages)} 条上下文消息")
-            return context_messages
+            logger.info(f"为消息 {ai_message.id} 构建了 {len(context_messages)} 条上下文消息，{len(context_attachments)} 个上下文图片")
+            return context_messages, context_attachments
             
         except Exception as e:
             logger.error(f"构建上下文失败: {str(e)}")
-            return []
+            return [], []
     
     def _get_channel_id_by_platform_id(self, db: Session, platform_channel_id: str) -> Optional[int]:
         """根据平台频道ID获取数据库频道ID"""
