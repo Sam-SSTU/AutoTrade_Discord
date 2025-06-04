@@ -169,6 +169,27 @@
             margin-top: 1rem;
         }
         
+        .trading-signal-details {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        
+        .signal-item {
+            width: calc(50% - 0.5rem);
+            margin-bottom: 0.5rem;
+        }
+        
+        .signal-item strong {
+            color: #606266;
+            font-size: 14px;
+        }
+        
+        .text-muted {
+            color: #909399;
+            font-style: italic;
+        }
+        
         .high-priority-alert {
             background: #ffebee;
             border: 1px solid #f44336;
@@ -224,7 +245,7 @@
                  class="high-priority-alert">
                 <h6><i class="el-icon-warning"></i> 高优先级交易信号</h6>
                 <p><strong>频道:</strong> {% raw %}{{ alert.channel_name }}{% endraw %}</p>
-                <p><strong>分类:</strong> {% raw %}{{ alert.category }}{% endraw %} | <strong>紧急程度:</strong> {% raw %}{{ alert.urgency }}{% endraw %}</p>
+                <p><strong>分类:</strong> {% raw %}{{ alert.category }}{% endraw %}</p>
                 <p><strong>摘要:</strong> {% raw %}{{ alert.summary }}{% endraw %}</p>
                 <div v-if="alert.trading_signal">
                     <strong>交易信号:</strong> {% raw %}{{ JSON.stringify(alert.trading_signal, null, 2) }}{% endraw %}
@@ -345,18 +366,10 @@
                             <div class="analysis-tags">
                                 <el-tag v-if="message.ai_analysis.is_trading_related" type="success">交易相关</el-tag>
                                 <el-tag v-if="message.ai_analysis.category">{% raw %}{{ message.ai_analysis.category }}{% endraw %}</el-tag>
-                                <el-tag v-if="message.ai_analysis.urgency" 
-                                        :type="message.ai_analysis.urgency === '高' ? 'danger' : 
-                                               message.ai_analysis.urgency === '中' ? 'warning' : 'info'">
-                                    {% raw %}{{ message.ai_analysis.urgency }}{% endraw %}
-                                </el-tag>
                                 <el-tag v-if="message.ai_analysis.sentiment" 
                                         :class="'sentiment-' + (message.ai_analysis.sentiment === '积极' ? 'positive' : 
                                                                message.ai_analysis.sentiment === '消极' ? 'negative' : 'neutral')">
                                     {% raw %}{{ message.ai_analysis.sentiment }}{% endraw %}
-                                </el-tag>
-                                <el-tag v-if="message.ai_analysis.confidence">
-                                    置信度: {% raw %}{{ (message.ai_analysis.confidence * 100).toFixed(1) }}{% endraw %}%
                                 </el-tag>
                             </div>
                             
@@ -374,7 +387,54 @@
                             <div v-if="message.ai_analysis.has_trading_signal && message.ai_analysis.trading_signal" 
                                  class="trading-signal">
                                 <h6><i class="el-icon-money"></i> 交易信号</h6>
-                                <pre>{% raw %}{{ JSON.stringify(message.ai_analysis.trading_signal, null, 2) }}{% endraw %}</pre>
+                                <div class="trading-signal-details">
+                                    <div class="signal-item">
+                                        <strong>信号类型:</strong> 
+                                        <el-tag v-if="message.ai_analysis.trading_signal.signal_type"
+                                                :type="message.ai_analysis.trading_signal.signal_type === 'Buy' ? 'success' : 
+                                                      message.ai_analysis.trading_signal.signal_type === 'Sell' ? 'danger' : 'info'">
+                                            {% raw %}{{ message.ai_analysis.trading_signal.signal_type }}{% endraw %}
+                                        </el-tag>
+                                        <span v-else class="text-muted">null</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>交易对:</strong> 
+                                        <div v-if="message.ai_analysis.trading_signal.symbols && message.ai_analysis.trading_signal.symbols.length > 0">
+                                            <el-tag v-for="symbol in message.ai_analysis.trading_signal.symbols" 
+                                                    :key="symbol" size="mini" class="ms-1">{% raw %}{{ symbol }}{% endraw %}</el-tag>
+                                        </div>
+                                        <span v-else class="text-muted">null</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>目标价格:</strong> 
+                                        <span>{% raw %}{{ message.ai_analysis.trading_signal.target_price || 'null' }}{% endraw %}</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>入场价格:</strong> 
+                                        <span>{% raw %}{{ message.ai_analysis.trading_signal.entry_price || 'null' }}{% endraw %}</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>止损价格:</strong> 
+                                        <span>{% raw %}{{ message.ai_analysis.trading_signal.stop_loss || 'null' }}{% endraw %}</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>时间框架:</strong> 
+                                        <span>{% raw %}{{ message.ai_analysis.trading_signal.time_frame || 'null' }}{% endraw %}</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>风险等级:</strong> 
+                                        <el-tag v-if="message.ai_analysis.trading_signal.risk_level"
+                                                :type="message.ai_analysis.trading_signal.risk_level === 'Low' ? 'success' : 
+                                                      message.ai_analysis.trading_signal.risk_level === 'High' ? 'danger' : 'warning'">
+                                            {% raw %}{{ message.ai_analysis.trading_signal.risk_level }}{% endraw %}
+                                        </el-tag>
+                                        <span v-else class="text-muted">null</span>
+                                    </div>
+                                    <div class="signal-item">
+                                        <strong>交易理由:</strong> 
+                                        <span>{% raw %}{{ message.ai_analysis.trading_signal.reasoning || 'null' }}{% endraw %}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -551,9 +611,7 @@
                                 priority: msg.priority,
                                 keywords: msg.keywords,
                                 category: msg.category,
-                                urgency: msg.urgency,
                                 sentiment: msg.sentiment,
-                                confidence: msg.confidence,
                                 summary: msg.summary,
                                 has_trading_signal: msg.has_trading_signal,
                                 trading_signal: msg.trading_signal

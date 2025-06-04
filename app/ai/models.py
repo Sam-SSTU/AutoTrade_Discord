@@ -18,9 +18,7 @@ class AIMessage(Base):
     priority = Column(Integer, default=1, index=True)  # 1-5优先级
     keywords = Column(JSON, nullable=True)  # 提取的关键词
     category = Column(String(50), nullable=True, index=True)  # 消息分类
-    urgency = Column(String(20), default='低', index=True)  # 紧急程度
     sentiment = Column(String(20), default='中性')  # 情感倾向
-    confidence = Column(Float, default=0.0)  # AI分析置信度
     analysis_summary = Column(Text, nullable=True)  # 分析摘要
     
     # 交易信号相关

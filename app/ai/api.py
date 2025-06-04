@@ -82,7 +82,6 @@ async def get_ai_messages(
     is_trading_related: Optional[bool] = Query(default=None, description="是否交易相关"),
     priority_min: Optional[int] = Query(default=None, ge=1, le=5, description="最低优先级"),
     category: Optional[str] = Query(default=None, description="消息分类"),
-    urgency: Optional[str] = Query(default=None, description="紧急程度"),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """分页获取AI消息列表，支持筛选"""
@@ -98,9 +97,6 @@ async def get_ai_messages(
     
     if category:
         query = query.filter(AIMessage.category == category)
-    
-    if urgency:
-        query = query.filter(AIMessage.urgency == urgency)
     
     # 计算总数
     total = query.count()
@@ -123,11 +119,10 @@ async def get_ai_messages(
                 "priority": msg.priority,
                 "keywords": msg.keywords,
                 "category": msg.category,
-                "urgency": msg.urgency,
                 "sentiment": msg.sentiment,
-                "confidence": msg.confidence,
                 "summary": msg.analysis_summary,
                 "has_trading_signal": msg.has_trading_signal,
+                "trading_signal": msg.trading_signal,
                 "created_at": msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "processed_at": msg.processed_at.strftime("%Y-%m-%d %H:%M:%S") if msg.processed_at else None
             }
@@ -159,9 +154,7 @@ async def get_ai_message_detail(
         "priority": ai_message.priority,
         "keywords": ai_message.keywords,
         "category": ai_message.category,
-        "urgency": ai_message.urgency,
         "sentiment": ai_message.sentiment,
-        "confidence": ai_message.confidence,
         "summary": ai_message.analysis_summary,
         "has_trading_signal": ai_message.has_trading_signal,
         "trading_signal": ai_message.trading_signal,
@@ -201,9 +194,7 @@ async def get_high_priority_messages(
             "content": msg.message_content[:200] + "..." if len(msg.message_content) > 200 else msg.message_content,
             "priority": msg.priority,
             "category": msg.category,
-            "urgency": msg.urgency,
             "sentiment": msg.sentiment,
-            "confidence": msg.confidence,
             "summary": msg.analysis_summary,
             "keywords": msg.keywords,
             "has_trading_signal": msg.has_trading_signal,
@@ -500,4 +491,13 @@ async def get_workflow_stats(
             "error_count": error_count,
             "error_rate": round(error_count / len(steps) * 100, 2) if steps else 0
         }
+    }
+
+@router.post("/reload-config", summary="重新加载配置")
+async def reload_config() -> Dict[str, Any]:
+    """重新加载AI处理配置（从环境变量）"""
+    result = await concurrent_processor.reload_config()
+    return {
+        "message": "配置重新加载完成",
+        "changes": result
     } 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
-from ..config.settings import get_settings
+from ..config.settings import get_settings, reload_settings
 from .preprocessor import message_preprocessor
 from .models import AIMessage, AIProcessingLog
 
@@ -258,6 +258,59 @@ class ConcurrentAIProcessor:
             "max_workers": self.max_workers,
             "max_batch_size": self.max_batch_size,
             "queue_size": self.task_queue.qsize()
+        }
+    
+    async def reload_config(self):
+        """重新加载配置"""
+        # 如果正在运行，先停止
+        was_running = self._running
+        if was_running:
+            await self.stop()
+        
+        # 重新加载配置
+        self.settings = reload_settings()
+        old_max_workers = self.max_workers
+        self.max_workers = self.settings.ai_max_concurrent_workers
+        self.max_batch_size = self.settings.ai_max_batch_size
+        self.queue_max_size = self.settings.ai_queue_max_size
+        self.processing_timeout = self.settings.ai_processing_timeout
+        
+        # 重新创建队列（因为maxsize在创建时固定）
+        old_queue_size = self.task_queue.qsize()
+        old_tasks = []
+        # 保存旧任务
+        while not self.task_queue.empty():
+            try:
+                old_tasks.append(self.task_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        
+        # 创建新队列
+        self.task_queue = asyncio.Queue(maxsize=self.queue_max_size)
+        
+        # 恢复旧任务到新队列
+        for task in old_tasks:
+            try:
+                self.task_queue.put_nowait(task)
+            except asyncio.QueueFull:
+                logger.warning(f"新队列容量不足，丢弃任务 {task.ai_message_id}")
+                break
+        
+        # 更新速率限制器
+        self.rate_limiter = RateLimiter(self.settings.ai_request_rate_limit)
+        
+        logger.info(f"配置已重新加载: max_workers从{old_max_workers}变更为{self.max_workers}, 队列大小从{old_queue_size}变更为{self.task_queue.qsize()}")
+        
+        # 如果之前在运行，重新启动
+        if was_running:
+            await self.start()
+        
+        return {
+            "old_max_workers": old_max_workers,
+            "new_max_workers": self.max_workers,
+            "old_queue_size": old_queue_size,
+            "new_queue_size": self.task_queue.qsize(),
+            "restarted": was_running
         }
     
     async def clear_queue(self):

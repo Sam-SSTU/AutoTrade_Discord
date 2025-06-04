@@ -101,17 +101,14 @@ Please return the JSON result in the following format:
     "priority": integer from 1-5,
     "keywords": ["keyword1", "keyword2"],
     "category": "Trading Signal/Market Analysis/Casual Chat/Other",
-    "urgency": "Low/Medium/High",
     "sentiment": "Bullish/Bearish/Neutral",
-    "confidence": confidence level from 0.0-1.0,
     "summary": "brief message summary"
 }
 
 Judgment criteria:
 1. Trading-related: Contains cryptocurrency names, prices, technical indicators, buy/sell recommendations, market analysis, etc.
 2. Priority: 5=immediate buy/sell signal, 4=important analysis, 3=general information, 2=reference information, 1=casual chat
-3. Urgency: Based on time sensitivity and importance
-4. Sentiment: Based on market outlook
+3. Sentiment: Based on market outlook
 
 If images are included, analyze their content for charts, screenshots of trading platforms, price movements, or other trading-related information."""
 

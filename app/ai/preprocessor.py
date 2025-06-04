@@ -350,9 +350,7 @@ class MessagePreprocessor:
         ai_message.priority = analysis_result.get("priority", 1)
         ai_message.keywords = analysis_result.get("keywords", [])
         ai_message.category = analysis_result.get("category", "其他")
-        ai_message.urgency = analysis_result.get("urgency", "低")
         ai_message.sentiment = analysis_result.get("sentiment", "中性")
-        ai_message.confidence = analysis_result.get("confidence", 0.0)
         ai_message.analysis_summary = analysis_result.get("summary", "")
         
         # 交易信号
