@@ -476,6 +476,8 @@ async def get_workflow_stats(
             completed_steps = [s for s in steps if s.step_name == step_name and s.status == "completed" and s.duration_ms]
             if completed_steps:
                 stats["avg_duration_ms"] = sum(s.duration_ms for s in completed_steps) // len(completed_steps)
+            else:
+                stats["avg_duration_ms"] = 0
     
     return {
         "total_steps": len(steps),
