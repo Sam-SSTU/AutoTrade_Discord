@@ -3,7 +3,7 @@ import time
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from ..config.settings import get_settings
@@ -18,7 +18,7 @@ class ProcessingTask:
     """处理任务数据类"""
     ai_message_id: int
     priority: int = 1
-    created_at: datetime = datetime.utcnow()
+    created_at: datetime = datetime.now(timezone.utc)
     retry_count: int = 0
 
 class RateLimiter:
@@ -32,7 +32,7 @@ class RateLimiter:
     async def acquire(self):
         """获取请求许可"""
         async with self.lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             # 清理过期的请求记录
             self.requests = [req_time for req_time in self.requests 
                            if now - req_time < timedelta(minutes=1)]
@@ -125,7 +125,7 @@ class ConcurrentAIProcessor:
         task = ProcessingTask(
             ai_message_id=ai_message_id,
             priority=priority,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         try:

@@ -1,13 +1,14 @@
 from typing import List, Dict, Any, Optional, Callable
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
 import time
 
 from .openai_client import get_openai_client
 from .models import AIMessage, AIProcessingLog
+from .workflow_tracker import WorkflowTracker, WorkflowStepContext
 from ..models.base import Message, Channel, KOL, Attachment
 from ..config.settings import get_settings
 
@@ -42,6 +43,9 @@ class MessagePreprocessor:
         """
         start_time = time.time()
         
+        # 创建工作流跟踪器
+        tracker = WorkflowTracker(db, ai_message)
+        
         # 记录开始处理
         log = AIProcessingLog(
             message_id=ai_message.id,
@@ -53,84 +57,183 @@ class MessagePreprocessor:
         
         try:
             # 1. 构建上下文
-            context_messages = await self._build_context(db, ai_message)
+            async with WorkflowStepContext(
+                tracker, 
+                "context_building",
+                input_data={
+                    "ai_message_id": ai_message.id,
+                    "channel_id": ai_message.channel_id,
+                    "max_context_messages": self.max_context_messages
+                }
+            ) as context_step:
+                context_messages = await self._build_context(db, ai_message)
+                context_step.set_output({
+                    "context_messages": context_messages,
+                    "context_count": len(context_messages),
+                    "context_message_ids": ai_message.context_messages or []
+                })
             
             # 2. 提取引用内容和附件
-            referenced_content = None
-            attachments = None
-            
-            if ai_message.references:
-                # 提取引用内容
-                if ai_message.references.get("referenced_content"):
-                    referenced_content = ai_message.references.get("referenced_content")
-                    logger.info(f"消息 {ai_message.id} 包含引用内容")
+            async with WorkflowStepContext(
+                tracker,
+                "reference_and_attachment_extraction",
+                input_data={
+                    "references": ai_message.references
+                }
+            ) as extract_step:
+                referenced_content = None
+                attachments = None
                 
-                # 提取附件信息
-                if ai_message.references.get("attachments"):
-                    attachments = []
-                    # 复制原始附件列表，确保不修改原始数据
-                    for att in ai_message.references.get("attachments"):
-                        att_copy = dict(att)  # 创建附件信息的副本
-                        
-                        # 如果有attachment_id，从数据库获取完整的附件数据
-                        if "id" in att_copy:
-                            attachment_id = att_copy["id"]
-                            try:
-                                # 从数据库查询附件对象
-                                attachment_obj = db.query(Attachment).filter(Attachment.id == attachment_id).first()
-                                
-                                if attachment_obj:
-                                    # 更新附件信息，包含实际的二进制数据
-                                    att_copy["file_data"] = attachment_obj.file_data
-                                    att_copy["content_type"] = attachment_obj.content_type
-                                    att_copy["filename"] = attachment_obj.filename
-                                    att_copy["size"] = len(attachment_obj.file_data) if attachment_obj.file_data else 0
-                                    
-                                    logger.debug(f"从数据库获取附件 {attachment_id}: {attachment_obj.filename}, 大小: {att_copy['size']} bytes")
-                                else:
-                                    logger.warning(f"未找到附件 {attachment_id}")
-                                    continue
-                                    
-                            except Exception as e:
-                                logger.error(f"获取附件 {attachment_id} 数据失败: {str(e)}")
-                                continue
-                        
-                        # 确保每个附件都有URL（作为备用）
-                        if "id" in att_copy and not att_copy.get("url"):
-                            att_copy["url"] = f"/api/messages/attachments/{att_copy['id']}"
-                            logger.debug(f"为附件 {att_copy['id']} 构建URL: {att_copy['url']}")
-                        
-                        attachments.append(att_copy)
+                if ai_message.references:
+                    # 提取引用内容
+                    if ai_message.references.get("referenced_content"):
+                        referenced_content = ai_message.references.get("referenced_content")
+                        logger.info(f"消息 {ai_message.id} 包含引用内容")
                     
-                    image_count = sum(1 for att in attachments if att.get("content_type", "").startswith("image/"))
-                    if image_count > 0:
-                        logger.info(f"消息 {ai_message.id} 包含 {image_count} 个图片附件")
-                        # 记录图片信息，方便调试
-                        for i, att in enumerate(attachments):
-                            if att.get("content_type", "").startswith("image/"):
-                                has_data = "有" if att.get("file_data") else "无"
-                                logger.info(f"图片 {i+1}: {att.get('filename', 'unknown')}, 类型: {att.get('content_type')}, 数据: {has_data}")
+                    # 提取附件信息
+                    if ai_message.references.get("attachments"):
+                        attachments = []
+                        # 复制原始附件列表，确保不修改原始数据
+                        for att in ai_message.references.get("attachments"):
+                            att_copy = dict(att)  # 创建附件信息的副本
+                            
+                            # 如果有attachment_id，从数据库获取完整的附件数据
+                            if "id" in att_copy:
+                                attachment_id = att_copy["id"]
+                                try:
+                                    # 从数据库查询附件对象
+                                    attachment_obj = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+                                    
+                                    if attachment_obj:
+                                        # 更新附件信息，包含实际的二进制数据
+                                        att_copy["file_data"] = attachment_obj.file_data
+                                        att_copy["content_type"] = attachment_obj.content_type
+                                        att_copy["filename"] = attachment_obj.filename
+                                        att_copy["size"] = len(attachment_obj.file_data) if attachment_obj.file_data else 0
+                                        
+                                        logger.debug(f"从数据库获取附件 {attachment_id}: {attachment_obj.filename}, 大小: {att_copy['size']} bytes")
+                                    else:
+                                        logger.warning(f"未找到附件 {attachment_id}")
+                                        continue
+                                    
+                                except Exception as e:
+                                    logger.error(f"获取附件 {attachment_id} 数据失败: {str(e)}")
+                                    continue
+                            
+                            # 确保每个附件都有URL（作为备用）
+                            if "id" in att_copy and not att_copy.get("url"):
+                                att_copy["url"] = f"/api/messages/attachments/{att_copy['id']}"
+                                logger.debug(f"为附件 {att_copy['id']} 构建URL: {att_copy['url']}")
+                            
+                            attachments.append(att_copy)
+                        
+                        image_count = sum(1 for att in attachments if att.get("content_type", "").startswith("image/"))
+                        if image_count > 0:
+                            logger.info(f"消息 {ai_message.id} 包含 {image_count} 个图片附件")
+                            # 记录图片信息，方便调试
+                            for i, att in enumerate(attachments):
+                                if att.get("content_type", "").startswith("image/"):
+                                    has_data = "有" if att.get("file_data") else "无"
+                                    logger.info(f"图片 {i+1}: {att.get('filename', 'unknown')}, 类型: {att.get('content_type')}, 数据: {has_data}")
+                
+                extract_step.set_output({
+                    "referenced_content": referenced_content,
+                    "attachments_count": len(attachments) if attachments else 0,
+                    "image_attachments_count": sum(1 for att in (attachments or []) if att.get("content_type", "").startswith("image/")),
+                    "has_referenced_content": referenced_content is not None,
+                    "attachment_details": [
+                        {
+                            "filename": att.get("filename"),
+                            "content_type": att.get("content_type"),
+                            "size": att.get("size", 0)
+                        } for att in (attachments or [])
+                    ]
+                })
             
             # 3. AI分析
-            analysis_result = await self.openai_client.analyze_message(
-                ai_message.message_content,
-                context_messages,
-                attachments=attachments,
-                referenced_content=referenced_content
-            )
+            async with WorkflowStepContext(
+                tracker,
+                "ai_message_analysis",
+                input_data={
+                    "message_content": ai_message.message_content,
+                    "context_messages_count": len(context_messages),
+                    "has_attachments": attachments is not None and len(attachments) > 0,
+                    "has_referenced_content": referenced_content is not None
+                }
+            ) as analysis_step:
+                analysis_result = await self.openai_client.analyze_message(
+                    ai_message.message_content,
+                    context_messages,
+                    attachments=attachments,
+                    referenced_content=referenced_content
+                )
+                
+                # 统计API调用信息（需要从openai_client获取）
+                analysis_step.set_output(
+                    analysis_result,
+                    api_calls_count=1,  # 基本分析一次API调用
+                    tokens_used=analysis_result.get("tokens_used", 0),
+                    cost_usd=analysis_result.get("cost_usd", 0.0)
+                )
             
             # 4. 提取交易信号（只有当分析结果明确包含交易信号时）
             trading_signal = None
             if (analysis_result.get("is_trading_related") and 
                 analysis_result.get("priority", 1) >= 4 and 
                 analysis_result.get("category") == "Trading Signal"):  # 只有明确是交易信号类别才提取
-                trading_signal = await self.openai_client.extract_trading_signals(
-                    ai_message.message_content,
-                    analysis_result
+                
+                async with WorkflowStepContext(
+                    tracker,
+                    "trading_signal_extraction",
+                    input_data={
+                        "message_content": ai_message.message_content,
+                        "analysis_result": analysis_result
+                    }
+                ) as signal_step:
+                    trading_signal = await self.openai_client.extract_trading_signals(
+                        ai_message.message_content,
+                        analysis_result
+                    )
+                    
+                    signal_step.set_output(
+                        trading_signal,
+                        api_calls_count=1,  # 交易信号提取一次API调用
+                        tokens_used=trading_signal.get("tokens_used", 0) if trading_signal else 0,
+                        cost_usd=trading_signal.get("cost_usd", 0.0) if trading_signal else 0.0
+                    )
+            else:
+                # 跳过交易信号提取步骤
+                await tracker.skip_step(
+                    "trading_signal_extraction",
+                    "消息不符合交易信号提取条件",
+                    input_data={
+                        "is_trading_related": analysis_result.get("is_trading_related"),
+                        "priority": analysis_result.get("priority"),
+                        "category": analysis_result.get("category")
+                    }
                 )
             
             # 5. 更新AI消息记录
-            await self._update_ai_message(db, ai_message, analysis_result, trading_signal, context_messages)
+            async with WorkflowStepContext(
+                tracker,
+                "ai_message_update",
+                input_data={
+                    "analysis_result": analysis_result,
+                    "trading_signal": trading_signal,
+                    "context_messages": context_messages
+                }
+            ) as update_step:
+                await self._update_ai_message(db, ai_message, analysis_result, trading_signal, context_messages)
+                
+                update_step.set_output({
+                    "updated_fields": {
+                        "is_trading_related": analysis_result.get("is_trading_related"),
+                        "priority": analysis_result.get("priority"),
+                        "category": analysis_result.get("category"),
+                        "has_trading_signal": trading_signal is not None,
+                        "context_messages_count": len(context_messages)
+                    }
+                })
             
             # 6. 完成处理
             await self._complete_processing(db, ai_message, log, start_time)
@@ -211,7 +314,7 @@ class MessagePreprocessor:
             ai_message.trading_signal = trading_signal
         
         ai_message.is_processed = True
-        ai_message.processed_at = datetime.utcnow()
+        ai_message.processed_at = datetime.now(timezone.utc)
         
         # 如果有错误信息，记录错误
         if "error" in analysis_result:
@@ -231,7 +334,7 @@ class MessagePreprocessor:
         duration_ms = int((end_time - start_time) * 1000)
         
         log.status = "completed"
-        log.end_time = datetime.utcnow()
+        log.end_time = datetime.now(timezone.utc)
         log.duration_ms = duration_ms
         
         db.commit()
@@ -253,12 +356,12 @@ class MessagePreprocessor:
         duration_ms = int((end_time - start_time) * 1000)
         
         log.status = "failed"
-        log.end_time = datetime.utcnow()
+        log.end_time = datetime.now(timezone.utc)
         log.duration_ms = duration_ms
         log.error_message = error_message
         
         ai_message.processing_error = error_message
-        ai_message.processed_at = datetime.utcnow()
+        ai_message.processed_at = datetime.now(timezone.utc)
         
         db.commit()
     
@@ -277,7 +380,7 @@ class MessagePreprocessor:
     
     async def get_processing_stats(self, db: Session, hours: int = 24) -> Dict[str, Any]:
         """获取处理统计信息"""
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         logs = db.query(AIProcessingLog).filter(
             and_(

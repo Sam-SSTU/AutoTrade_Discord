@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 工作流详情 - AutoTrade Discord</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .workflow-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            transition: box-shadow 0.2s;
+        }
+        .workflow-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .step-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        .step-status.completed {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .step-status.failed {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .step-status.processing {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .step-status.skipped {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+        .json-viewer {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 0.75rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .workflow-summary {
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .summary-stat {
+            text-align: center;
+            padding: 0.5rem;
+        }
+        .summary-stat .number {
+            font-size: 2rem;
+            font-weight: bold;
+            display: block;
+        }
+        .summary-stat .label {
+            font-size: 0.875rem;
+            opacity: 0.9;
+        }
+        .step-timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+        .step-timeline::before {
+            content: '';
+            position: absolute;
+            left: 1rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #dee2e6;
+        }
+        .step-item {
+            position: relative;
+            margin-bottom: 2rem;
+        }
+        .step-item::before {
+            content: '';
+            position: absolute;
+            left: -1.5rem;
+            top: 0.5rem;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            background-color: #6c757d;
+        }
+        .step-item.completed::before {
+            background-color: #28a745;
+        }
+        .step-item.failed::before {
+            background-color: #dc3545;
+        }
+        .step-item.processing::before {
+            background-color: #ffc107;
+        }
+        .step-item.skipped::before {
+            background-color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- 侧边栏 -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-list"></i> 消息列表</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                        <div id="messageList">
+                            <!-- 消息列表将通过JavaScript动态加载 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 主内容区 -->
+            <div class="col-md-9">
+                <div id="workflowDetails" style="display: none;">
+                    <!-- 消息信息 -->
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-envelope"></i> 消息信息</h5>
+                            <button class="btn btn-sm btn-outline-primary" onclick="loadMessageList()">
+                                <i class="fas fa-refresh"></i> 刷新
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="messageInfo">
+                                <!-- 消息详情将动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 工作流摘要 -->
+                    <div class="workflow-summary">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="summary-stat">
+                                    <span class="number" id="totalSteps">-</span>
+                                    <span class="label">总步骤</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-stat">
+                                    <span class="number" id="completedSteps">-</span>
+                                    <span class="label">已完成</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-stat">
+                                    <span class="number" id="totalDuration">-</span>
+                                    <span class="label">总耗时(ms)</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-stat">
+                                    <span class="number" id="totalCost">-</span>
+                                    <span class="label">总成本($)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 工作流步骤 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="fas fa-cogs"></i> 工作流步骤</h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="workflowSteps" class="step-timeline">
+                                <!-- 步骤详情将动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 初始提示 -->
+                <div id="initialPrompt" class="text-center mt-5">
+                    <i class="fas fa-arrow-left fa-3x text-muted mb-3"></i>
+                    <h4 class="text-muted">请从左侧选择一条消息查看工作流详情</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 步骤详情模态框 -->
+    <div class="modal fade" id="stepDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-info-circle"></i> 步骤详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="stepDetailContent">
+                        <!-- 步骤详情将动态填充 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentMessageId = null;
+
+        // 页面加载时获取消息列表
+        document.addEventListener('DOMContentLoaded', function() {
+            loadMessageList();
+        });
+
+        // 加载消息列表
+        async function loadMessageList() {
+            try {
+                const response = await fetch('/api/ai/messages?size=50&is_trading_related=true');
+                const data = await response.json();
+                
+                const messageList = document.getElementById('messageList');
+                messageList.innerHTML = data.data.map(message => `
+                    <div class="card mb-2 cursor-pointer message-item" onclick="loadWorkflow(${message.id})" style="cursor: pointer;">
+                        <div class="card-body p-2">
+                            <h6 class="card-title mb-1">${message.channel_name}</h6>
+                            <p class="card-text small text-muted mb-1">${message.content}</p>
+                            <div class="d-flex justify-content-between small">
+                                <span class="badge bg-${message.is_trading_related ? 'success' : 'secondary'}">
+                                    ${message.is_trading_related ? '交易相关' : '非交易'}
+                                </span>
+                                <span class="text-muted">${message.processed_at}</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('加载消息列表失败:', error);
+                document.getElementById('messageList').innerHTML = '<div class="alert alert-danger">加载失败</div>';
+            }
+        }
+
+        // 加载工作流详情
+        async function loadWorkflow(messageId) {
+            try {
+                currentMessageId = messageId;
+                
+                // 高亮选中的消息
+                document.querySelectorAll('.message-item').forEach(item => {
+                    item.classList.remove('border-primary');
+                });
+                event.currentTarget.classList.add('border-primary');
+
+                const response = await fetch(`/api/ai/workflow-steps/${messageId}`);
+                const data = await response.json();
+                
+                // 显示消息信息
+                displayMessageInfo(data.message_info);
+                
+                // 显示工作流摘要
+                displayWorkflowSummary(data.workflow_summary);
+                
+                // 显示工作流步骤
+                displayWorkflowSteps(data.workflow_steps);
+                
+                // 显示详情区域
+                document.getElementById('initialPrompt').style.display = 'none';
+                document.getElementById('workflowDetails').style.display = 'block';
+                
+            } catch (error) {
+                console.error('加载工作流详情失败:', error);
+                alert('加载工作流详情失败');
+            }
+        }
+
+        // 显示消息信息
+        function displayMessageInfo(messageInfo) {
+            document.getElementById('messageInfo').innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>频道:</strong> ${messageInfo.channel_name}<br>
+                        <strong>优先级:</strong> ${messageInfo.priority}<br>
+                        <strong>分类:</strong> ${messageInfo.category || '-'}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>创建时间:</strong> ${messageInfo.created_at}<br>
+                        <strong>处理时间:</strong> ${messageInfo.processed_at || '-'}<br>
+                        <strong>交易相关:</strong> ${messageInfo.is_trading_related ? '是' : '否'}
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <strong>消息内容:</strong><br>
+                    <div class="border rounded p-2 bg-light">${messageInfo.content}</div>
+                </div>
+            `;
+        }
+
+        // 显示工作流摘要
+        function displayWorkflowSummary(summary) {
+            document.getElementById('totalSteps').textContent = summary.total_steps;
+            document.getElementById('completedSteps').textContent = summary.completed_steps;
+            document.getElementById('totalDuration').textContent = summary.total_duration_ms;
+            document.getElementById('totalCost').textContent = summary.total_cost_usd.toFixed(4);
+        }
+
+        // 显示工作流步骤
+        function displayWorkflowSteps(steps) {
+            const stepsContainer = document.getElementById('workflowSteps');
+            stepsContainer.innerHTML = steps.map(step => `
+                <div class="step-item ${step.status}" onclick="showStepDetail(${step.id})">
+                    <div class="workflow-card p-3" style="cursor: pointer;">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0">${step.step_name}</h6>
+                            <span class="step-status ${step.status}">${getStatusText(step.status)}</span>
+                        </div>
+                        <div class="row small text-muted">
+                            <div class="col-md-3">
+                                <i class="fas fa-clock"></i> ${step.duration_ms || 0}ms
+                            </div>
+                            <div class="col-md-3">
+                                <i class="fas fa-exchange-alt"></i> ${step.api_calls_count || 0} API
+                            </div>
+                            <div class="col-md-3">
+                                <i class="fas fa-coins"></i> ${step.tokens_used || 0} tokens
+                            </div>
+                            <div class="col-md-3">
+                                <i class="fas fa-dollar-sign"></i> $${(step.cost_usd || 0).toFixed(4)}
+                            </div>
+                        </div>
+                        ${step.error_message ? `<div class="mt-2 small text-danger"><i class="fas fa-exclamation-triangle"></i> ${step.error_message}</div>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 获取状态文本
+        function getStatusText(status) {
+            const statusMap = {
+                'completed': '已完成',
+                'failed': '失败',
+                'processing': '处理中',
+                'skipped': '跳过'
+            };
+            return statusMap[status] || status;
+        }
+
+        // 显示步骤详情
+        async function showStepDetail(stepId) {
+            try {
+                const response = await fetch(`/api/ai/workflow-step/${stepId}`);
+                const data = await response.json();
+                
+                document.getElementById('stepDetailContent').innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-info-circle"></i> 基本信息</h6>
+                            <table class="table table-sm">
+                                <tr><td>步骤名称:</td><td>${data.step_info.step_name}</td></tr>
+                                <tr><td>状态:</td><td><span class="step-status ${data.step_info.status}">${getStatusText(data.step_info.status)}</span></td></tr>
+                                <tr><td>开始时间:</td><td>${data.step_info.start_time}</td></tr>
+                                <tr><td>结束时间:</td><td>${data.step_info.end_time || '-'}</td></tr>
+                                <tr><td>耗时:</td><td>${data.step_info.duration_ms || 0}ms</td></tr>
+                                <tr><td>API调用:</td><td>${data.step_info.api_calls_count || 0}</td></tr>
+                                <tr><td>Token使用:</td><td>${data.step_info.tokens_used || 0}</td></tr>
+                                <tr><td>成本:</td><td>$${(data.step_info.cost_usd || 0).toFixed(4)}</td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-envelope"></i> 消息上下文</h6>
+                            <div class="border rounded p-2 bg-light">
+                                <strong>频道:</strong> ${data.message_context.channel_name || '-'}<br>
+                                <strong>内容预览:</strong> ${data.message_context.content_preview || '-'}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${data.step_info.error_message ? `
+                    <div class="mt-3">
+                        <h6><i class="fas fa-exclamation-triangle text-danger"></i> 错误信息</h6>
+                        <div class="alert alert-danger">${data.step_info.error_message}</div>
+                    </div>
+                    ` : ''}
+                    
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-arrow-right"></i> 输入数据</h6>
+                            <div class="json-viewer">${formatJson(data.input_data)}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-arrow-left"></i> 输出数据</h6>
+                            <div class="json-viewer">${formatJson(data.output_data)}</div>
+                        </div>
+                    </div>
+                    
+                    ${data.processing_details ? `
+                    <div class="mt-3">
+                        <h6><i class="fas fa-cog"></i> 处理详情</h6>
+                        <div class="json-viewer">${formatJson(data.processing_details)}</div>
+                    </div>
+                    ` : ''}
+                `;
+                
+                new bootstrap.Modal(document.getElementById('stepDetailModal')).show();
+                
+            } catch (error) {
+                console.error('加载步骤详情失败:', error);
+                alert('加载步骤详情失败');
+            }
+        }
+
+        // 格式化JSON显示
+        function formatJson(data) {
+            if (!data) return '<span class="text-muted">无数据</span>';
+            return '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        }
+    </script>
+</body>
+</html> 

@@ -85,7 +85,7 @@ def reset_database():
 
         # 导入AI模型确保它们被注册到Base.metadata中
         try:
-            from app.ai.models import AIMessage, AIProcessingLog
+            from app.ai.models import AIMessage, AIProcessingLog, AIProcessingStep, AIManualEdit
             print("AI models imported successfully")
         except ImportError as e:
             print(f"Warning: Could not import AI models: {e}")

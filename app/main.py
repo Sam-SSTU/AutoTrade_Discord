@@ -9,7 +9,7 @@ from pathlib import Path
 import json
 from typing import List
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import time
 from websockets.exceptions import ConnectionClosedOK
@@ -273,4 +273,4 @@ async def websocket_ai_endpoint(websocket: WebSocket):
 @app.get("/api/ping")
 async def ping():
     """Check backend connectivity"""
-    return {"status": "ok", "timestamp": datetime.now().isoformat()} 
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()} 

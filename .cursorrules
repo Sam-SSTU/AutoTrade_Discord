@@ -164,6 +164,8 @@ pkill -f "uvicorn app.main:app"
 
 其它注意事项：
 1.涉及数据库更新的，在tests/reset_db.py中添加删除对应数据库数据的代码
+2.你操作的数据库，可能会有之前操作失败的残留数据，请注意不要被误导
+3.API文档：http://localhost:8000/docs
 
 ## 🔍 Project-Specific Notes
 

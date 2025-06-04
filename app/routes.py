@@ -15,4 +15,8 @@ async def index(request: Request):
 
 @router.get("/ai", response_class=HTMLResponse)
 async def ai_messages(request: Request):
-    return templates.TemplateResponse("ai_messages.html", {"request": request}) 
+    return templates.TemplateResponse("ai_messages.html", {"request": request})
+
+@router.get("/ai/workflow", response_class=HTMLResponse)
+async def ai_workflow(request: Request):
+    return templates.TemplateResponse("ai_workflow.html", {"request": request}) 

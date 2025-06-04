@@ -3,7 +3,7 @@ from ..models import Message, Channel
 from sqlalchemy.orm import Session
 from fastapi import WebSocket
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 import asyncio
 import logging
@@ -165,7 +165,7 @@ class AIMessageHandler:
                 "attachments": attachments
             },
             "status": "queued_for_processing",
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         }
 
         await self._broadcast_to_clients(message_data)
@@ -240,7 +240,7 @@ class AIMessageHandler:
                 "contains_images": bool(attachments and any(att.get("is_image") for att in attachments))
             },
             "processed_at": ai_message.processed_at.strftime("%Y-%m-%d %H:%M:%S") if ai_message.processed_at else None,
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         }
 
         await self._broadcast_to_clients(analysis_data)
@@ -256,7 +256,7 @@ class AIMessageHandler:
                 "summary": ai_message.analysis_summary,
                 "trading_signal": ai_message.trading_signal,
                 "contains_images": bool(attachments and any(att.get("is_image") for att in attachments)),
-                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             }
             await self._broadcast_to_clients(alert_data)
 

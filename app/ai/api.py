@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from ..database import get_db
-from .models import AIMessage, AIProcessingLog
+from .models import AIMessage, AIProcessingLog, AIProcessingStep, AIManualEdit
+from .workflow_tracker import WorkflowTracker
 from .message_handler import ai_message_handler
 from .preprocessor import message_preprocessor
 from .concurrent_processor import concurrent_processor
@@ -251,7 +252,7 @@ async def get_message_categories(
 ) -> Dict[str, Any]:
     """获取消息分类统计信息"""
     
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
     
     # 统计各分类的消息数量
     from sqlalchemy import func
@@ -287,7 +288,7 @@ async def get_popular_keywords(
 ) -> Dict[str, Any]:
     """获取热门关键词统计"""
     
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
     
     # 获取交易相关消息的关键词
     messages = db.query(AIMessage).filter(
@@ -316,4 +317,187 @@ async def get_popular_keywords(
             }
             for keyword, count in sorted_keywords
         ]
+    }
+
+@router.get("/workflow-steps/{message_id}", summary="获取消息的工作流步骤详情")
+async def get_workflow_steps(
+    message_id: int,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """获取消息的工作流步骤详情"""
+    
+    ai_message = db.query(AIMessage).filter(AIMessage.id == message_id).first()
+    if not ai_message:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    
+    # 获取工作流步骤
+    steps = db.query(AIProcessingStep).filter(
+        AIProcessingStep.ai_message_id == message_id
+    ).order_by(AIProcessingStep.step_order).all()
+    
+    # 创建工作流跟踪器来获取摘要
+    tracker = WorkflowTracker(db, ai_message)
+    workflow_summary = await tracker.get_workflow_summary()
+    
+    return {
+        "message_info": {
+            "id": ai_message.id,
+            "channel_id": ai_message.channel_id,
+            "channel_name": ai_message.channel_name,
+            "content": ai_message.message_content,
+            "is_trading_related": ai_message.is_trading_related,
+            "priority": ai_message.priority,
+            "category": ai_message.category,
+            "created_at": ai_message.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "processed_at": ai_message.processed_at.strftime("%Y-%m-%d %H:%M:%S") if ai_message.processed_at else None,
+        },
+        "workflow_summary": workflow_summary,
+        "workflow_steps": [
+            {
+                "id": step.id,
+                "step_name": step.step_name,
+                "step_order": step.step_order,
+                "status": step.status,
+                "input_data": step.input_data,
+                "output_data": step.output_data,
+                "processing_details": step.processing_details,
+                "error_message": step.error_message,
+                "start_time": step.start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": step.end_time.strftime("%Y-%m-%d %H:%M:%S") if step.end_time else None,
+                "duration_ms": step.duration_ms,
+                "api_calls_count": step.api_calls_count,
+                "tokens_used": step.tokens_used,
+                "cost_usd": step.cost_usd
+            }
+            for step in steps
+        ]
+    }
+
+@router.get("/workflow-step/{step_id}", summary="获取单个工作流步骤详情")
+async def get_workflow_step_detail(
+    step_id: int,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """获取单个工作流步骤的详细信息，包括完整的输入输出数据"""
+    
+    step = db.query(AIProcessingStep).filter(AIProcessingStep.id == step_id).first()
+    if not step:
+        raise HTTPException(status_code=404, detail="工作流步骤不存在")
+    
+    # 获取关联的AI消息
+    ai_message = db.query(AIMessage).filter(AIMessage.id == step.ai_message_id).first()
+    
+    return {
+        "step_info": {
+            "id": step.id,
+            "ai_message_id": step.ai_message_id,
+            "step_name": step.step_name,
+            "step_order": step.step_order,
+            "status": step.status,
+            "start_time": step.start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": step.end_time.strftime("%Y-%m-%d %H:%M:%S") if step.end_time else None,
+            "duration_ms": step.duration_ms,
+            "api_calls_count": step.api_calls_count,
+            "tokens_used": step.tokens_used,
+            "cost_usd": step.cost_usd,
+            "error_message": step.error_message
+        },
+        "input_data": step.input_data,
+        "output_data": step.output_data,
+        "processing_details": step.processing_details,
+        "message_context": {
+            "channel_name": ai_message.channel_name if ai_message else None,
+            "content_preview": ai_message.message_content[:100] + "..." if ai_message and len(ai_message.message_content) > 100 else ai_message.message_content if ai_message else None
+        }
+    }
+
+@router.get("/workflow-stats", summary="获取工作流统计信息")
+async def get_workflow_stats(
+    hours: int = Query(default=24, description="统计时间范围（小时）"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """获取工作流处理统计信息"""
+    
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    
+    # 获取步骤统计
+    steps = db.query(AIProcessingStep).filter(
+        AIProcessingStep.start_time >= since
+    ).all()
+    
+    if not steps:
+        return {
+            "total_steps": 0,
+            "step_stats": {},
+            "performance_stats": {},
+            "error_stats": {}
+        }
+    
+    # 按步骤名称统计
+    step_stats = {}
+    total_duration = 0
+    total_api_calls = 0
+    total_tokens = 0
+    total_cost = 0.0
+    error_count = 0
+    
+    for step in steps:
+        step_name = step.step_name
+        if step_name not in step_stats:
+            step_stats[step_name] = {
+                "total_count": 0,
+                "completed_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "avg_duration_ms": 0,
+                "total_api_calls": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0
+            }
+        
+        stats = step_stats[step_name]
+        stats["total_count"] += 1
+        
+        if step.status == "completed":
+            stats["completed_count"] += 1
+        elif step.status == "failed":
+            stats["failed_count"] += 1
+            error_count += 1
+        elif step.status == "skipped":
+            stats["skipped_count"] += 1
+        
+        if step.duration_ms:
+            total_duration += step.duration_ms
+        if step.api_calls_count:
+            stats["total_api_calls"] += step.api_calls_count
+            total_api_calls += step.api_calls_count
+        if step.tokens_used:
+            stats["total_tokens"] += step.tokens_used
+            total_tokens += step.tokens_used
+        if step.cost_usd:
+            stats["total_cost"] += step.cost_usd
+            total_cost += step.cost_usd
+    
+    # 计算平均值
+    for step_name, stats in step_stats.items():
+        if stats["completed_count"] > 0:
+            # 计算已完成步骤的平均耗时
+            completed_steps = [s for s in steps if s.step_name == step_name and s.status == "completed" and s.duration_ms]
+            if completed_steps:
+                stats["avg_duration_ms"] = sum(s.duration_ms for s in completed_steps) // len(completed_steps)
+    
+    return {
+        "total_steps": len(steps),
+        "step_stats": step_stats,
+        "performance_stats": {
+            "avg_duration_ms": total_duration // len(steps) if steps else 0,
+            "total_api_calls": total_api_calls,
+            "total_tokens_used": total_tokens,
+            "total_cost_usd": round(total_cost, 4),
+            "avg_cost_per_step": round(total_cost / len(steps), 6) if steps else 0
+        },
+        "error_stats": {
+            "error_count": error_count,
+            "error_rate": round(error_count / len(steps) * 100, 2) if steps else 0
+        }
     } 
