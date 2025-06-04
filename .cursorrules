@@ -162,6 +162,9 @@ pkill -f "uvicorn app.main:app"
 
 注意，主服务已经启动，请不要启动服务。
 
+其它注意事项：
+1.涉及数据库更新的，在tests/reset_db.py中添加删除对应数据库数据的代码
+
 ## 🔍 Project-Specific Notes
 
 ### Database
