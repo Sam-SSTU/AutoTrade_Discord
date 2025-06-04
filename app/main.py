@@ -9,7 +9,7 @@ from pathlib import Path
 import json
 from typing import List
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import time
 from websockets.exceptions import ConnectionClosedOK
@@ -46,12 +46,25 @@ async def lifespan(app: FastAPI):
     message_handler = MessageHandler()
     await message_handler.start()
     
+    # 启动AI消息处理器
+    await ai_message_handler.start_processing()
+    
+    # 设置AI处理结果回调，将结果广播到前端
+    from .ai.concurrent_processor import concurrent_processor
+    concurrent_processor.set_result_callback(ai_message_handler.broadcast_processing_result)
+    
+    logger.info("Started AI message processing service")
+    
     yield
     
     # Shutdown
     if message_handler:
         await message_handler.stop()
         logger.info("Stopped message monitoring service")
+    
+    # 停止AI消息处理器
+    await ai_message_handler.stop_processing()
+    logger.info("Stopped AI message processing service")
 
 # Create FastAPI application
 app = FastAPI(
@@ -74,6 +87,10 @@ app.add_middleware(
 app.include_router(routes.router)  # 页面路由
 app.include_router(channels.router, prefix="/api")  # API路由
 app.include_router(messages.router, prefix="/api")  # API路由
+
+# 添加AI路由
+from .ai.api import router as ai_router
+app.include_router(ai_router, prefix="/api")  # AI API路由
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -256,4 +273,4 @@ async def websocket_ai_endpoint(websocket: WebSocket):
 @app.get("/api/ping")
 async def ping():
     """Check backend connectivity"""
-    return {"status": "ok", "timestamp": datetime.now().isoformat()} 
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()} 

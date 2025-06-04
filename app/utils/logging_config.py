@@ -114,7 +114,7 @@ def configure_logging():
     """配置整个应用的日志系统"""
     # 先设置根日志器
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG)  # 临时设置为DEBUG级别
     
     # 清除现有处理器
     if root_logger.handlers:
@@ -122,6 +122,7 @@ def configure_logging():
     
     # 添加控制台处理器
     console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)  # 支持DEBUG级别
     console_handler.setFormatter(logging.Formatter(DETAILED_FORMAT))
     root_logger.addHandler(console_handler)
     

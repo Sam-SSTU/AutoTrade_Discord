@@ -1,7 +1,7 @@
 import os
 import aiohttp
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 from typing import Optional
 import traceback
@@ -48,7 +48,7 @@ class FileHandler:
                 full_save_dir = os.path.join(self.base_dir, save_dir)
             else:
                 # 按年月组织文件夹
-                year_month = datetime.now().strftime('%Y%m')
+                year_month = datetime.now(timezone.utc).strftime('%Y%m')
                 full_save_dir = os.path.join(self.base_dir, 'attachments', year_month)
             
             os.makedirs(full_save_dir, exist_ok=True)
@@ -71,7 +71,7 @@ class FileHandler:
 
     def _generate_filename(self, url: str, content_type: str = '') -> str:
         """生成文件名"""
-        hash_base = f"{url}{datetime.now().timestamp()}"
+        hash_base = f"{url}{datetime.now(timezone.utc).timestamp()}"
         filename = hashlib.md5(hash_base.encode()).hexdigest()
         
         if 'image' in content_type:

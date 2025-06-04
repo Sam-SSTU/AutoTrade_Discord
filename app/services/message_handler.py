@@ -111,23 +111,11 @@ class MessageHandler:
             # 简化的日志输出
             message_logger.info(f"{username}发了消息: {content or '[空消息]'}")
             
-            # 使用 discord_client 的方法存储消息
+            # 使用 discord_client 的方法存储消息（已包含所有必要的数据库操作）
             await self.discord_client.store_message(message_data, self._db)
-            self._db.commit()
             
-            # Increment unread count
+            # 返回消息处理结果（如果需要）
             if channel:
-                unread = self._db.query(UnreadMessage).filter(UnreadMessage.channel_id == channel.id).first()
-                if unread:
-                    unread.unread_count += 1
-                else:
-                    unread = UnreadMessage(
-                        channel_id=channel.id,
-                        unread_count=1
-                    )
-                    self._db.add(unread)
-                self._db.commit()
-            
                 return {
                     'type': 'new_message',
                     'channel_id': channel.platform_channel_id,

@@ -69,13 +69,50 @@ def reset_database():
                 WHEN duplicate_object THEN null;
             END $$;
         """)
+        
+        # 确保KOLCategory枚举也存在（用于频道表）
+        cur.execute("""
+            DO $$ BEGIN
+                CREATE TYPE kolcategory AS ENUM ('CRYPTO', 'STOCKS', 'FUTURES', 'FOREX', 'OTHERS');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        """)
+        
         conn.commit()
         cur.close()
         conn.close()
 
-        # Create all tables
+        # 导入AI模型确保它们被注册到Base.metadata中
+        try:
+            from app.ai.models import AIMessage, AIProcessingLog, AIProcessingStep, AIManualEdit
+            print("AI models imported successfully")
+        except ImportError as e:
+            print(f"Warning: Could not import AI models: {e}")
+
+        # Create all tables (包括AI表)
         Base.metadata.create_all(engine)
         print("Database tables created!")
+        
+        # 验证AI表是否创建成功
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            # 检查所有表
+            result = conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"))
+            all_tables = [row[0] for row in result]
+            print(f"All tables created: {all_tables}")
+            
+            # 检查AI表
+            ai_tables = [t for t in all_tables if 'ai_' in t]
+            if ai_tables:
+                print(f"AI tables found: {ai_tables}")
+                
+                for table in ai_tables:
+                    result = conn.execute(text(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position"))
+                    columns = [row[0] for row in result]
+                    print(f"Table '{table}' columns: {columns}")
+            else:
+                print("No AI tables found")
 
     except Exception as e:
         print(f"Error occurred: {str(e)}")

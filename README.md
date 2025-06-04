@@ -110,9 +110,11 @@ python reset_db.py
 ```bash
 # 启动主服务
 uvicorn app.main:app --reload
-
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # 停止服务（如需要）
 kill -9 $(lsof -ti:8000)
+
+pkill -f "uvicorn"
 ```
 
 ## 📊 系统功能

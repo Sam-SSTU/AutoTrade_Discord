@@ -121,7 +121,7 @@ async def create_message(
             content=message_create.content,
             channel_id=channel.id,
             kol_id=kol.id,
-            created_at=datetime.utcnow()  # 使用 utcnow() 获取纯 UTC 时间
+            created_at=datetime.now(timezone.utc)  # 使用 now(timezone.utc) 获取纯 UTC 时间
         )
         
         db.add(message)
