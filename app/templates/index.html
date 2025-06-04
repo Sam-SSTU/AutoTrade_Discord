@@ -763,10 +763,15 @@
 
                         <div class="mb-3">
                             <label class="form-label">Database Operations</label>
-                            <button class="btn btn-danger w-100" @click="clearDatabase">
+                            <button class="btn btn-danger w-100 mb-2" @click="clearDatabase">
                                 Clear All Messages
                             </button>
-                            <small class="text-muted">This will delete all messages from the database</small>
+                            <small class="text-muted mb-2 d-block">This will delete all messages (messages, attachments, unread_messages tables) and physical files from the storage.</small>
+
+                            <button class="btn btn-warning w-100" @click="clearAIData">
+                                Clear All AI Data
+                            </button>
+                            <small class="text-muted">This will delete all AI-related data (ai_messages, ai_processing_logs, ai_processing_steps, ai_manual_edits tables).</small>
                         </div>
                     </div>
                 </div>
@@ -1278,7 +1283,7 @@
                     }
                 },
                 async clearDatabase() {
-                    if (!confirm('确定要删除所有消息吗？此操作无法撤销！')) {
+                    if (!confirm('确定要删除所有消息吗？此操作无法撤销！将清除原始消息、附件、未读状态和存储文件。')) {
                         return;
                     }
 
@@ -1310,9 +1315,9 @@
                             
                             this.$notify({
                                 title: '成功',
-                                message: `已清除 ${result.deleted_messages} 条消息和 ${result.deleted_attachments} 个附件`,
+                                message: `已清除 ${result.deleted_messages} 条消息和 ${result.deleted_attachments} 个附件。物理文件清除状态: ${result.files_cleared ? '成功' : '部分失败或目录不存在'}`,
                                 type: 'success',
-                                duration: 3000
+                                duration: 5000
                             });
                             
                             // 如果当前有选中的频道，重新加载该频道
@@ -1320,7 +1325,8 @@
                                 await this.loadMessages(this.selectedChannel);
                             }
                         } else {
-                            throw new Error('清除数据库失败');
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || '清除数据库失败');
                         }
                     } catch (error) {
                         this.$notify.error({
@@ -1330,6 +1336,42 @@
                         });
                     } finally {
                         // 关闭加载中对话框
+                        loadingInstance.close();
+                    }
+                },
+                async clearAIData() {
+                    if (!confirm('确定要删除所有AI分析数据吗？此操作无法撤销！将清除AI消息、处理日志、步骤和手动编辑记录。')) {
+                        return;
+                    }
+                    const loadingInstance = this.$loading({
+                        lock: true,
+                        text: '正在清除AI数据...',
+                        spinner: 'el-icon-loading',
+                        background: 'rgba(0, 0, 0, 0.7)'
+                    });
+                    try {
+                        const response = await fetch('/api/ai/clear-all-ai-data', {
+                            method: 'POST'
+                        });
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.$notify({
+                                title: '成功',
+                                message: `已成功清除AI分析数据。详情: AI消息 ${result.deleted_ai_messages}, 处理步骤 ${result.deleted_processing_steps}, 处理日志 ${result.deleted_processing_logs}, 手动编辑 ${result.deleted_manual_edits}`,
+                                type: 'success',
+                                duration: 5000
+                            });
+                        } else {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || '清除AI数据失败');
+                        }
+                    } catch (error) {
+                        this.$notify.error({
+                            title: '错误',
+                            message: '清除AI数据失败: ' + error.message,
+                            duration: 3000
+                        });
+                    } finally {
                         loadingInstance.close();
                     }
                 },

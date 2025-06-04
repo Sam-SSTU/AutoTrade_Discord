@@ -94,6 +94,26 @@ def reset_database():
         Base.metadata.create_all(engine)
         print("Database tables created!")
         
+        # 清理 storage/ 目录下的物理文件
+        storage_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'storage') # 获取项目根目录下的storage
+        if os.path.exists(storage_dir):
+            print(f"Cleaning up storage directory: {storage_dir}")
+            import shutil
+            for item_name in os.listdir(storage_dir):
+                item_path = os.path.join(storage_dir, item_name)
+                try:
+                    if os.path.isfile(item_path) or os.path.islink(item_path):
+                        os.unlink(item_path)
+                        print(f"Deleted file/link: {item_path}")
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                        print(f"Deleted directory: {item_path}")
+                except Exception as e:
+                    print(f'Failed to delete {item_path}. Reason: {e}')
+            print("Storage directory cleaned.")
+        else:
+            print(f"Storage directory {storage_dir} not found, skipping cleanup.")
+
         # 验证AI表是否创建成功
         from sqlalchemy import text
         with engine.connect() as conn:
