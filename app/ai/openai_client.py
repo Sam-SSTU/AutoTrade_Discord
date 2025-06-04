@@ -25,7 +25,7 @@ class OpenAIClient:
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY 环境变量未设置")
         
-        # 根据配置选择API地址 - 添加调试日志，处理注释
+        # 根据配置选择API地址 - 修复环境变量处理
         use_proxy_env = os.getenv("USE_OPENAI_PROXY", "false")
         proxy_url_env = os.getenv("OPENAI_PROXY_URL", "https://api.openai99.top/v1")
         
@@ -39,19 +39,12 @@ class OpenAIClient:
         logger.info(f"代理配置: use_proxy={use_proxy}")
         
         if use_proxy:
-            # 代理地址处理 - 修复端点路径
-            proxy_base = proxy_url_env.rstrip('/v1').rstrip('/')
-            
-            # 对于openai99.top等代理服务，需要使用完整的v1路径
-            if 'openai99.top' in proxy_base:
-                self.base_url = f"{proxy_base}/v1"
-            else:
-                self.base_url = proxy_base
-                
+            # 使用代理地址
+            self.base_url = proxy_url_env
             logger.info(f"使用代理模式，base_url: {self.base_url}")
         else:
-            # 官方地址，只使用基础域名
-            self.base_url = "https://api.openai.com"
+            # 使用官方地址，确保包含完整路径
+            self.base_url = "https://api.openai.com/v1"
             logger.info(f"使用官方模式，base_url: {self.base_url}")
         
         # 初始化客户端
@@ -62,27 +55,30 @@ class OpenAIClient:
         
         logger.info(f"OpenAI客户端初始化完成，最终使用地址: {self.base_url}")
     
-    def _get_default_analysis(self, reason: str = "处理失败") -> Dict[str, Any]:
+    def _get_default_analysis(self, reason: str = "Processing failed") -> Dict[str, Any]:
         """返回默认的分析结果，用于错误处理"""
         return {
             "is_trading_related": False,
             "priority": 1,
             "keywords": [],
-            "category": "其他",
-            "urgency": "低",
-            "sentiment": "中性",
+            "category": "Other",
+            "urgency": "Low",
+            "sentiment": "Neutral",
             "confidence": 0.0,
             "summary": reason,
             "error": reason
         }
     
-    async def analyze_message(self, message_content: str, context_messages: List[str] = None) -> Dict[str, Any]:
+    async def analyze_message(self, message_content: str, context_messages: List[str] = None, 
+                       attachments: List[Dict[str, Any]] = None, referenced_content: str = None) -> Dict[str, Any]:
         """
-        使用GPT-4o分析单条消息
+        使用GPT-4o分析单条消息，支持图片和引用内容
         
         Args:
             message_content: 要分析的消息内容
             context_messages: 上下文消息列表
+            attachments: 附件列表，包含图片URL等信息
+            referenced_content: 引用的消息内容
             
         Returns:
             Dict包含分析结果：
@@ -95,72 +91,202 @@ class OpenAIClient:
         """
         try:
             # 构建分析提示词
-            system_prompt = """你是一个专业的加密货币交易消息分析师。你的任务是分析KOL消息，判断是否与交易相关，并提取关键信息。
+            system_prompt = """You are a professional cryptocurrency trading message analyst. Your task is to analyze KOL messages, determine if they are trading-related, and extract key information.
 
-请按照以下格式返回JSON结果：
+Please return the JSON result in the following format:
 {
     "is_trading_related": true/false,
-    "priority": 1-5的整数,
-    "keywords": ["关键词1", "关键词2"],
-    "category": "交易信号/市场分析/技术分析/新闻资讯/闲聊/其他",
-    "urgency": "低/中/高",
-    "sentiment": "看涨/看跌/中性",
-    "confidence": 0.0-1.0的置信度,
-    "summary": "简短的消息摘要"
+    "priority": integer from 1-5,
+    "keywords": ["keyword1", "keyword2"],
+    "category": "Trading Signal/Market Analysis/Casual Chat/Other",
+    "urgency": "Low/Medium/High",
+    "sentiment": "Bullish/Bearish/Neutral",
+    "confidence": confidence level from 0.0-1.0,
+    "summary": "brief message summary"
 }
 
-判断标准：
-1. 交易相关：包含币种名称、价格、技术指标、买卖建议、市场分析等
-2. 优先级：5=立即买卖信号，4=重要分析，3=一般信息，2=参考信息，1=闲聊
-3. 紧急程度：基于时效性和重要性判断
-4. 情感：基于对市场的看法判断"""
+Judgment criteria:
+1. Trading-related: Contains cryptocurrency names, prices, technical indicators, buy/sell recommendations, market analysis, etc.
+2. Priority: 5=immediate buy/sell signal, 4=important analysis, 3=general information, 2=reference information, 1=casual chat
+3. Urgency: Based on time sensitivity and importance
+4. Sentiment: Based on market outlook
+
+If images are included, analyze their content for charts, screenshots of trading platforms, price movements, or other trading-related information."""
 
             # 构建用户消息
-            user_message = f"分析以下消息：\n\n{message_content}"
+            user_message = f"Analyze the following message:\n\n{message_content}"
+            
+            # 添加引用内容
+            if referenced_content:
+                user_message += f"\n\nReferenced message:\n{referenced_content}"
             
             # 如果有上下文，添加上下文信息
             if context_messages:
                 context_text = "\n".join(context_messages[-3:])  # 只取最近3条
-                user_message += f"\n\n上下文消息：\n{context_text}"
+                user_message += f"\n\nContext messages:\n{context_text}"
             
             logger.info(f"正在调用OpenAI API: {self.base_url}")
             logger.debug(f"使用API Key: {self.api_key[:10]}...")  # 只显示前10个字符
             
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=0.3,
-                max_tokens=500,
-                response_format={"type": "json_object"}
-            )
+            # 准备基础消息列表
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
             
-            # 添加调试信息
-            logger.debug(f"API响应类型: {type(response)}")
-            logger.debug(f"API响应属性: {dir(response)}")
+            # 检查是否有图片附件 - 改进检测逻辑
+            def is_image_attachment(att):
+                # 检查 content_type
+                content_type = att.get('content_type', '')
+                if content_type.startswith('image/'):
+                    return True
+                
+                # 检查文件扩展名
+                url = att.get('url', '')
+                if url:
+                    url_lower = url.lower()
+                    image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']
+                    if any(url_lower.endswith(ext) for ext in image_extensions):
+                        return True
+                
+                # 检查文件名
+                filename = att.get('filename', '')
+                if filename:
+                    filename_lower = filename.lower()
+                    if any(filename_lower.endswith(ext) for ext in image_extensions):
+                        return True
+                
+                return False
             
-            # 处理不同格式的响应
+            has_images = attachments and any(is_image_attachment(att) for att in attachments)
+            
+            # 如果有图片附件，尝试使用多模态消息
+            multimodal_messages = None
+            if has_images:
+                # 创建新的多模态消息列表
+                multimodal_messages = [{"role": "system", "content": system_prompt}]
+                
+                # 构建包含图片的用户消息
+                user_content = []
+                
+                # 添加文本内容
+                user_content.append({"type": "text", "text": user_message})
+                
+                # 添加图片内容
+                image_count = 0
+                for att in attachments:
+                    if is_image_attachment(att):
+                        # 优先使用base64编码的data URL（如果存在）
+                        image_url = att.get('url')
+                        if image_url:
+                            # 检查是否已经是data URL格式
+                            if image_url.startswith('data:'):
+                                # 已经是base64 data URL，直接使用
+                                full_url = image_url
+                                logger.info(f"使用base64 data URL: {image_url[:50]}...")
+                            else:
+                                # 如果不是data URL，尝试从附件数据构建base64 URL
+                                file_data = att.get('file_data')
+                                content_type = att.get('content_type', 'image/png')
+                                
+                                if file_data:
+                                    import base64
+                                    try:
+                                        # 如果file_data是bytes，直接编码
+                                        if isinstance(file_data, bytes):
+                                            base64_data = base64.b64encode(file_data).decode('utf-8')
+                                        else:
+                                            # 如果是其他格式，先转换为bytes
+                                            base64_data = base64.b64encode(str(file_data).encode('utf-8')).decode('utf-8')
+                                        
+                                        full_url = f"data:{content_type};base64,{base64_data}"
+                                        logger.info(f"从file_data构建base64 URL，大小: {len(base64_data)} 字符")
+                                    except Exception as e:
+                                        logger.error(f"构建base64 URL失败: {str(e)}")
+                                        continue
+                                else:
+                                    # 如果没有file_data，跳过这个附件（避免使用无法访问的localhost URL）
+                                    logger.warning(f"附件 {att.get('filename', 'unknown')} 没有file_data，跳过")
+                                    continue
+                            
+                            user_content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": full_url,
+                                    "detail": "low"  # 添加detail参数以控制处理精度
+                                }
+                            })
+                            image_count += 1
+                            logger.info(f"添加图片到分析: {att.get('filename', 'unknown')}")
+                
+                # 将多模态内容添加到消息列表
+                multimodal_messages.append({"role": "user", "content": user_content})
+                logger.info(f"准备使用多模态消息进行分析，包含 {image_count} 张图片")
+            
+            # 调用API - 首先尝试使用多模态消息
+            response = None
             result = None
-            if hasattr(response, 'choices') and response.choices:
-                result = response.choices[0].message.content
-                logger.debug(f"从choices提取内容: {result}")
-            elif isinstance(response, str):
-                # 某些代理可能直接返回字符串
-                result = response
-                logger.debug(f"直接使用字符串响应: {result}")
-            elif hasattr(response, 'content'):
-                result = response.content
-                logger.debug(f"从content属性提取: {result}")
+            
+            # 如果有图片，先尝试多模态请求
+            if has_images and multimodal_messages:
+                try:
+                    logger.info("尝试使用多模态消息调用API")
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o",  # 使用 gpt-4o 模型
+                        messages=multimodal_messages,
+                        temperature=0.3,
+                        max_tokens=500,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    # 处理响应
+                    if hasattr(response, 'choices') and response.choices:
+                        result = response.choices[0].message.content
+                        logger.info("多模态请求成功")
+                    else:
+                        logger.warning("多模态请求返回了意外的响应格式")
+                        return self._get_default_analysis("多模态请求返回了意外的响应格式")
+                        
+                except Exception as e:
+                    logger.error(f"多模态请求失败: {str(e)}")
+                    return self._get_default_analysis(f"多模态请求失败: {str(e)}")
+            
+            # 如果没有图片，使用普通文本请求
+            elif not has_images:
+                try:
+                    logger.info("使用纯文本消息调用API")
+                    response = self.client.chat.completions.create(
+                        model="gpt-4o",  # 使用 gpt-4o 模型
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=500,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    # 处理不同格式的响应
+                    if hasattr(response, 'choices') and response.choices:
+                        result = response.choices[0].message.content
+                        logger.info("纯文本请求成功")
+                    elif isinstance(response, str):
+                        result = response
+                    elif hasattr(response, 'content'):
+                        result = response.content
+                    else:
+                        logger.error(f"未知的响应格式: {type(response)}, 内容: {response}")
+                        return self._get_default_analysis(f"未知的响应格式: {type(response)}")
+                        
+                except Exception as e:
+                    logger.error(f"纯文本请求失败: {str(e)}")
+                    return self._get_default_analysis(f"纯文本请求失败: {str(e)}")
+            
+            # 如果有图片但多模态请求失败，直接返回错误
             else:
-                logger.error(f"未知的响应格式: {type(response)}, 内容: {response}")
-                raise ValueError(f"API返回了未知格式的响应: {type(response)}")
+                return self._get_default_analysis("包含图片的消息无法处理，多模态请求不可用")
             
             # 检查响应内容是否为空
             if not result or result.strip() == "":
                 logger.error("API返回了空响应")
-                raise ValueError("API返回了空响应")
+                return self._get_default_analysis("API返回了空响应")
             
             # 检查是否返回了HTML页面（说明API配置有问题）
             if result.strip().lower().startswith('<!doctype html>') or result.strip().lower().startswith('<html'):
@@ -172,9 +298,7 @@ class OpenAIClient:
                 logger.error(f"当前使用的API Key前缀: {self.api_key[:20]}...")
                 
                 # 返回默认分析而不是抛出异常
-                analysis = self._get_default_analysis("API配置错误：返回HTML页面")
-                logger.info(f"消息分析完成: 交易相关={analysis.get('is_trading_related')}, 优先级={analysis.get('priority')}")
-                return analysis
+                return self._get_default_analysis("API configuration error: HTML page returned")
             
             # 尝试清理响应内容（移除可能的非JSON前缀）
             result = result.strip()
@@ -210,21 +334,25 @@ class OpenAIClient:
                             logger.error("提取的JSON部分也无法解析")
                             # 使用默认分析结果而不是抛出异常
                             logger.warning("使用默认分析结果作为备用方案")
-                            analysis = self._get_default_analysis("JSON解析失败")
+                            return self._get_default_analysis("JSON parsing failed")
                     else:
                         logger.error("未能在响应中找到JSON对象")
-                        analysis = self._get_default_analysis("未找到JSON对象")
+                        return self._get_default_analysis("JSON object not found")
                 else:
                     logger.error("响应内容为空")
-                    analysis = self._get_default_analysis("响应内容为空")
+                    return self._get_default_analysis("Empty response")
             
+            # 如果有图片，在分析结果中标记
+            if has_images:
+                analysis["contains_images"] = True
+                
             logger.info(f"消息分析完成: 交易相关={analysis.get('is_trading_related')}, 优先级={analysis.get('priority')}")
             return analysis
             
         except Exception as e:
             logger.error(f"OpenAI消息分析失败: {str(e)}")
             # 返回默认分析结果
-            return self._get_default_analysis(f"分析失败: {str(e)}")
+            return self._get_default_analysis(f"Analysis failed: {str(e)}")
     
     async def extract_trading_signals(self, message_content: str, analysis: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -241,26 +369,26 @@ class OpenAIClient:
             return None
             
         try:
-            system_prompt = """你是交易信号提取专家。从KOL消息中提取具体的交易信号信息。
+            system_prompt = """You are a trading signal extraction expert. Extract specific trading signal information from KOL messages.
 
-返回JSON格式：
+Return JSON format:
 {
     "has_signal": true/false,
-    "signal_type": "买入/卖出/持有/观察",
+    "signal_type": "Buy/Sell/Hold/Watch",
     "symbols": ["BTC", "ETH"],
-    "target_price": "目标价格或null",
-    "stop_loss": "止损价格或null", 
-    "entry_price": "入场价格或null",
-    "time_frame": "时间周期",
-    "reasoning": "交易理由",
-    "risk_level": "低/中/高"
+    "target_price": "target price or null",
+    "stop_loss": "stop loss price or null", 
+    "entry_price": "entry price or null",
+    "time_frame": "time period",
+    "reasoning": "trading rationale",
+    "risk_level": "Low/Medium/High"
 }"""
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o",  # 使用 gpt-4o 模型
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"提取交易信号：\n{message_content}"}
+                    {"role": "user", "content": f"Extract trading signals from the following message:\n{message_content}"}
                 ],
                 temperature=0.2,
                 max_tokens=300,

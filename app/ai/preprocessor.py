@@ -8,7 +8,8 @@ import time
 
 from .openai_client import get_openai_client
 from .models import AIMessage, AIProcessingLog
-from ..models.base import Message, Channel, KOL
+from ..models.base import Message, Channel, KOL, Attachment
+from ..config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,29 +52,78 @@ class MessagePreprocessor:
         db.commit()
         
         try:
-            # 1. 消息预筛选
-            if not self._is_message_worth_processing(ai_message.message_content):
-                logger.info(f"消息 {ai_message.id} 预筛选未通过，跳过AI分析")
-                await self._complete_processing(db, ai_message, log, start_time, skip_analysis=True)
-                
-                # 通知前端处理完成
-                if self.result_callback:
-                    await self.result_callback(ai_message)
-                
-                return True
-            
-            # 2. 构建上下文
+            # 1. 构建上下文
             context_messages = await self._build_context(db, ai_message)
+            
+            # 2. 提取引用内容和附件
+            referenced_content = None
+            attachments = None
+            
+            if ai_message.references:
+                # 提取引用内容
+                if ai_message.references.get("referenced_content"):
+                    referenced_content = ai_message.references.get("referenced_content")
+                    logger.info(f"消息 {ai_message.id} 包含引用内容")
+                
+                # 提取附件信息
+                if ai_message.references.get("attachments"):
+                    attachments = []
+                    # 复制原始附件列表，确保不修改原始数据
+                    for att in ai_message.references.get("attachments"):
+                        att_copy = dict(att)  # 创建附件信息的副本
+                        
+                        # 如果有attachment_id，从数据库获取完整的附件数据
+                        if "id" in att_copy:
+                            attachment_id = att_copy["id"]
+                            try:
+                                # 从数据库查询附件对象
+                                attachment_obj = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+                                
+                                if attachment_obj:
+                                    # 更新附件信息，包含实际的二进制数据
+                                    att_copy["file_data"] = attachment_obj.file_data
+                                    att_copy["content_type"] = attachment_obj.content_type
+                                    att_copy["filename"] = attachment_obj.filename
+                                    att_copy["size"] = len(attachment_obj.file_data) if attachment_obj.file_data else 0
+                                    
+                                    logger.debug(f"从数据库获取附件 {attachment_id}: {attachment_obj.filename}, 大小: {att_copy['size']} bytes")
+                                else:
+                                    logger.warning(f"未找到附件 {attachment_id}")
+                                    continue
+                                    
+                            except Exception as e:
+                                logger.error(f"获取附件 {attachment_id} 数据失败: {str(e)}")
+                                continue
+                        
+                        # 确保每个附件都有URL（作为备用）
+                        if "id" in att_copy and not att_copy.get("url"):
+                            att_copy["url"] = f"/api/messages/attachments/{att_copy['id']}"
+                            logger.debug(f"为附件 {att_copy['id']} 构建URL: {att_copy['url']}")
+                        
+                        attachments.append(att_copy)
+                    
+                    image_count = sum(1 for att in attachments if att.get("content_type", "").startswith("image/"))
+                    if image_count > 0:
+                        logger.info(f"消息 {ai_message.id} 包含 {image_count} 个图片附件")
+                        # 记录图片信息，方便调试
+                        for i, att in enumerate(attachments):
+                            if att.get("content_type", "").startswith("image/"):
+                                has_data = "有" if att.get("file_data") else "无"
+                                logger.info(f"图片 {i+1}: {att.get('filename', 'unknown')}, 类型: {att.get('content_type')}, 数据: {has_data}")
             
             # 3. AI分析
             analysis_result = await self.openai_client.analyze_message(
                 ai_message.message_content,
-                context_messages
+                context_messages,
+                attachments=attachments,
+                referenced_content=referenced_content
             )
             
-            # 4. 提取交易信号（如果是高优先级交易消息）
+            # 4. 提取交易信号（只有当分析结果明确包含交易信号时）
             trading_signal = None
-            if analysis_result.get("is_trading_related") and analysis_result.get("priority", 1) >= 4:
+            if (analysis_result.get("is_trading_related") and 
+                analysis_result.get("priority", 1) >= 4 and 
+                analysis_result.get("category") == "Trading Signal"):  # 只有明确是交易信号类别才提取
                 trading_signal = await self.openai_client.extract_trading_signals(
                     ai_message.message_content,
                     analysis_result
@@ -97,44 +147,6 @@ class MessagePreprocessor:
             await self._handle_processing_error(db, ai_message, log, start_time, str(e))
             return False
     
-    def _is_message_worth_processing(self, content: str) -> bool:
-        """
-        消息预筛选：判断消息是否值得进行AI分析
-        过滤掉明显无关的消息，如纯表情、过短消息等
-        """
-        if not content or len(content.strip()) < 5:
-            return False
-        
-        # 过滤纯表情消息
-        emoji_patterns = ['😀', '😂', '🤣', '😊', '😍', '🔥', '💯', '👍', '👎', '❤️', '💰', '🚀', '📈', '📉']
-        if len(content.strip()) <= 10 and any(emoji in content for emoji in emoji_patterns):
-            return False
-        
-        # 过滤常见的无关词汇
-        ignore_phrases = ['gm', 'gn', 'good morning', 'good night', 'hello', 'hi', 'bye', 'thanks', 'thx']
-        if content.lower().strip() in ignore_phrases:
-            return False
-        
-        # 检查是否包含潜在的交易相关关键词
-        trading_keywords = [
-            # 币种相关
-            'btc', 'bitcoin', 'eth', 'ethereum', 'usdt', 'bnb', 'ada', 'dot', 'sol', 'doge',
-            # 交易相关
-            '买', '卖', 'buy', 'sell', '做多', '做空', 'long', 'short', '入场', '出场',
-            # 价格相关
-            '价格', 'price', '涨', '跌', 'pump', 'dump', '突破', 'breakout',
-            # 技术分析
-            '支撑', '阻力', 'support', 'resistance', 'ma', 'rsi', 'macd', 'kdj',
-            # 市场相关
-            '市场', 'market', '行情', '趋势', 'trend', '牛市', '熊市', 'bull', 'bear'
-        ]
-        
-        content_lower = content.lower()
-        has_trading_keywords = any(keyword in content_lower for keyword in trading_keywords)
-        
-        # 如果包含交易关键词，或者消息较长（可能包含分析内容），则处理
-        return has_trading_keywords or len(content.strip()) > 50
-    
     async def _build_context(self, db: Session, ai_message: AIMessage) -> List[str]:
         """
         构建消息上下文
@@ -153,7 +165,8 @@ class MessagePreprocessor:
             context_ids = []
             
             for msg in reversed(recent_messages):  # 按时间正序
-                if msg.content and len(msg.content.strip()) > 5:
+                # 包含所有消息内容，不再进行长度过滤
+                if msg.content:
                     context_messages.append(msg.content)
                     context_ids.append(msg.id)
             
@@ -211,8 +224,7 @@ class MessagePreprocessor:
         db: Session, 
         ai_message: AIMessage, 
         log: AIProcessingLog, 
-        start_time: float,
-        skip_analysis: bool = False
+        start_time: float
     ):
         """完成处理，更新日志"""
         end_time = time.time()
@@ -221,12 +233,6 @@ class MessagePreprocessor:
         log.status = "completed"
         log.end_time = datetime.utcnow()
         log.duration_ms = duration_ms
-        
-        if skip_analysis:
-            log.details = {"skipped": True, "reason": "预筛选未通过"}
-            ai_message.is_processed = True
-            ai_message.processed_at = datetime.utcnow()
-            ai_message.analysis_summary = "消息预筛选未通过"
         
         db.commit()
         

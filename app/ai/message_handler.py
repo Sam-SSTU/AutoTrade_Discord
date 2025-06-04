@@ -9,6 +9,7 @@ import asyncio
 import logging
 from .models import AIMessage
 from .concurrent_processor import concurrent_processor
+from ..config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +52,22 @@ class AIMessageHandler:
             "referenced_content": message.referenced_content,
             "attachments": [
                 {
+                    "id": attachment.id,
                     "filename": attachment.filename,
                     "content_type": attachment.content_type,
+                    "url": f"/api/messages/attachments/{attachment.id}",
+                    "is_image": attachment.content_type and attachment.content_type.startswith('image/')
                 }
                 for attachment in message.attachments
             ] if message.attachments else [],
             "embeds": json.loads(message.embeds) if message.embeds else []
         }
+
+        # 记录附件信息用于调试
+        if message.attachments:
+            logger.info(f"消息包含 {len(message.attachments)} 个附件")
+            for i, att in enumerate(message.attachments):
+                logger.info(f"附件 {i+1}: {att.filename}, 类型: {att.content_type}, ID: {att.id}")
 
         # 创建新的AI消息记录
         ai_message = AIMessage(
@@ -112,6 +122,31 @@ class AIMessageHandler:
 
     async def broadcast_new_message(self, message: Message, ai_message: AIMessage):
         """广播新消息到前端"""
+        # 准备附件信息
+        attachments = []
+        if message.attachments:
+            for attachment in message.attachments:
+                # 从环境变量获取基础URL，如果没有则使用localhost
+                settings = get_settings()
+                base_url = settings.BASE_URL if hasattr(settings, "BASE_URL") else "http://localhost:8000"
+                
+                # 构建相对和完整URL
+                relative_url = f"/api/messages/attachments/{attachment.id}"
+                full_url = f"{base_url}{relative_url}"
+                
+                att_info = {
+                    "id": attachment.id,
+                    "filename": attachment.filename,
+                    "content_type": attachment.content_type,
+                    "url": relative_url,
+                    "full_url": full_url
+                }
+                # 标记图片类型
+                if attachment.content_type and attachment.content_type.startswith('image/'):
+                    att_info["is_image"] = True
+                    logger.info(f"标记图片附件: {att_info['filename']}, URL: {att_info['full_url']}")
+                attachments.append(att_info)
+        
         message_data = {
             "type": "new_ai_message",
             "ai_message_id": ai_message.id,
@@ -127,15 +162,7 @@ class AIMessageHandler:
                 "created_at": message.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "referenced_message_id": message.referenced_message_id,
                 "referenced_content": message.referenced_content,
-                "attachments": [
-                    {
-                        "id": attachment.id,
-                        "filename": attachment.filename,
-                        "content_type": attachment.content_type,
-                        "url": f"/api/messages/attachments/{attachment.id}"
-                    }
-                    for attachment in message.attachments
-                ] if message.attachments else []
+                "attachments": attachments
             },
             "status": "queued_for_processing",
             "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -145,12 +172,60 @@ class AIMessageHandler:
 
     async def broadcast_processing_result(self, ai_message: AIMessage):
         """广播AI处理结果到前端"""
+        # 准备附件信息
+        attachments = []
+        references = {}
+        
+        if ai_message.references:
+            # 处理引用内容
+            if "referenced_content" in ai_message.references:
+                references["referenced_content"] = ai_message.references["referenced_content"]
+                references["referenced_message_id"] = ai_message.references.get("referenced_message_id")
+            
+            # 处理附件
+            if "attachments" in ai_message.references:
+                # 从环境变量获取基础URL，如果没有则使用localhost
+                settings = get_settings()
+                base_url = settings.BASE_URL if hasattr(settings, "BASE_URL") else "http://localhost:8000"
+                
+                for att in ai_message.references["attachments"]:
+                    att_info = dict(att)  # 复制原始附件信息
+                    
+                    # 确保有URL
+                    if "id" in att_info and not att_info.get("url"):
+                        relative_url = f"/api/messages/attachments/{att_info['id']}"
+                        att_info["url"] = relative_url
+                    
+                    # 确保有完整URL
+                    if att_info.get("url") and not att_info.get("full_url"):
+                        url = att_info.get("url")
+                        if not url.startswith("http"):
+                            full_url = f"{base_url}{url}" if url.startswith('/') else f"{base_url}/{url}"
+                            att_info["full_url"] = full_url
+                        else:
+                            att_info["full_url"] = url
+                    
+                    # 标记图片类型
+                    if att_info.get("content_type", "").startswith('image/'):
+                        att_info["is_image"] = True
+                        logger.info(f"标记图片附件: {att_info.get('filename')}, URL: {att_info.get('full_url', att_info.get('url', '无URL'))}")
+                    
+                    attachments.append(att_info)
+        
+        # 记录附件信息用于调试
+        if attachments:
+            logger.info(f"广播结果包含 {len(attachments)} 个附件")
+            for i, att in enumerate(attachments):
+                logger.info(f"附件 {i+1}: {att.get('filename')}, URL: {att.get('full_url', att.get('url', '无URL'))}, 是否图片: {att.get('is_image', False)}")
+        
         analysis_data = {
             "type": "ai_analysis_result",
             "ai_message_id": ai_message.id,
             "channel_id": ai_message.channel_id,
             "channel_name": ai_message.channel_name,
             "content": ai_message.message_content,
+            "references": references,
+            "attachments": attachments,
             "analysis": {
                 "is_trading_related": ai_message.is_trading_related,
                 "priority": ai_message.priority,
@@ -162,6 +237,7 @@ class AIMessageHandler:
                 "summary": ai_message.analysis_summary,
                 "has_trading_signal": ai_message.has_trading_signal,
                 "trading_signal": ai_message.trading_signal,
+                "contains_images": bool(attachments and any(att.get("is_image") for att in attachments))
             },
             "processed_at": ai_message.processed_at.strftime("%Y-%m-%d %H:%M:%S") if ai_message.processed_at else None,
             "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -179,6 +255,7 @@ class AIMessageHandler:
                 "urgency": ai_message.urgency,
                 "summary": ai_message.analysis_summary,
                 "trading_signal": ai_message.trading_signal,
+                "contains_images": bool(attachments and any(att.get("is_image") for att in attachments)),
                 "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             }
             await self._broadcast_to_clients(alert_data)

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     postgres_port: str = Field(default="5432", env="POSTGRES_PORT")
     postgres_db: str = Field(default="autotrade", env="POSTGRES_DB")
     
+    # 应用配置
+    BASE_URL: str = Field(default="http://localhost:8000", env="BASE_URL")
+    
     # Discord配置
     discord_token: Optional[str] = Field(default=None, env="DISCORD_TOKEN")
     
