@@ -1034,19 +1034,21 @@ class DiscordClient:
 
     async def store_message(self, message_data: dict, db: Session) -> None:
         """Store a Discord message in the database"""
+        platform_message_id = str(message_data.get('id'))
+        
         try:
-            # Check if message already exists
-            platform_message_id = str(message_data.get('id'))
+            # 基本验证
             if not platform_message_id:
                 message_logger.error("Message ID not found in message data")
                 return
                 
+            # 简单的重复消息检查 - 不使用锁定
             existing_message = db.query(Message).filter(
                 Message.platform_message_id == platform_message_id
             ).first()
             
             if existing_message:
-                message_logger.info(f"消息已存在，跳过: {platform_message_id}")
+                message_logger.debug(f"消息已存在，跳过: {platform_message_id}")
                 return
             
             # Get channel
@@ -1079,7 +1081,7 @@ class DiscordClient:
                         is_active=True
                     )
                     db.add(kol)
-                    db.commit()
+                    db.flush()  # 使用flush而不是commit，确保在同一事务中
             else:
                 # 对于非帖子类型的频道，使用原来的作者逻辑
                 author = message_data.get('author', {})
@@ -1105,7 +1107,7 @@ class DiscordClient:
                         is_active=True
                     )
                     db.add(kol)
-                    db.commit()
+                    db.flush()  # 使用flush而不是commit，确保在同一事务中
             
             # Create message
             message = Message(
@@ -1120,7 +1122,7 @@ class DiscordClient:
             )
             
             db.add(message)
-            db.commit()
+            db.flush()  # 确保message被分配ID
             
             # Handle attachments
             for attachment_data in message_data.get('attachments', []):
@@ -1136,6 +1138,8 @@ class DiscordClient:
                     unread_count=1
                 )
                 db.add(unread)
+            
+            # 统一提交所有更改
             db.commit()
             
             # Send WebSocket notification with UTC timestamp
@@ -1157,10 +1161,22 @@ class DiscordClient:
             message_logger.info(f"消息存储成功: {platform_message_id}")
             
         except Exception as e:
-            message_logger.error(f"Error storing message: {str(e)}")
-            message_logger.error(traceback.format_exc())
-            db.rollback()
-            raise
+            # 特别处理重复消息错误
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in [
+                "duplicate key", 
+                "unique constraint", 
+                "already exists",
+                "uniqueviolation"
+            ]):
+                message_logger.debug(f"消息重复，安全跳过: {platform_message_id}")
+                db.rollback()
+                return
+            else:
+                message_logger.error(f"Error storing message {platform_message_id}: {str(e)}")
+                message_logger.error(traceback.format_exc())
+                db.rollback()
+                raise
 
     async def get_channel_messages(self, channel_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """获取频道的历史消息，支持分页"""
