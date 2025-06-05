@@ -3,6 +3,10 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..database import get_db
 from .models import AIMessage, AIProcessingLog, AIProcessingStep, AIManualEdit
@@ -476,6 +480,8 @@ async def get_workflow_stats(
             completed_steps = [s for s in steps if s.step_name == step_name and s.status == "completed" and s.duration_ms]
             if completed_steps:
                 stats["avg_duration_ms"] = sum(s.duration_ms for s in completed_steps) // len(completed_steps)
+            else:
+                stats["avg_duration_ms"] = 0
     
     return {
         "total_steps": len(steps),
@@ -500,4 +506,53 @@ async def reload_config() -> Dict[str, Any]:
     return {
         "message": "配置重新加载完成",
         "changes": result
-    } 
+    }
+
+@router.post("/clear-all-ai-data", summary="清除所有AI分析数据")
+async def clear_all_ai_data(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """清除所有AI分析相关的数据表，包括 ai_messages, ai_processing_logs, ai_processing_steps, ai_manual_edits"""
+    try:
+        transaction = db.begin_nested()
+        try:
+            # 为了更安全和明确，我们按特定顺序删除，并统计数量
+            # AIProcessingStep 和 AIManualEdit 依赖 AIMessage
+            # AIProcessingLog 也应与 AIMessage 的清理相关联，但无直接外键依赖
+            
+            deleted_steps_count = db.query(AIProcessingStep).delete(synchronize_session='fetch')
+            logger.info(f"已删除 {deleted_steps_count} 条 AIProcessingStep 记录。")
+
+            deleted_edits_count = db.query(AIManualEdit).delete(synchronize_session='fetch')
+            logger.info(f"已删除 {deleted_edits_count} 条 AIManualEdit 记录。")
+            
+            deleted_logs_count = db.query(AIProcessingLog).delete(synchronize_session='fetch')
+            logger.info(f"已删除 {deleted_logs_count} 条 AIProcessingLog 记录。")
+
+            # AIMessage 表有到 AIProcessingStep 和 AIManualEdit 的级联删除关系
+            # 但为了确保先删除子表再删除父表（如果级联不完全或想明确控制顺序），以及准确计数
+            # 此处我们已经手动删除了 AIProcessingStep 和 AIManualEdit
+            # 所以直接删除 AIMessage 即可
+            deleted_ai_messages_count = db.query(AIMessage).delete(synchronize_session='fetch')
+            logger.info(f"已删除 {deleted_ai_messages_count} 条 AIMessage 记录。")
+
+            transaction.commit()
+            db.commit()
+
+            logger.info(f"成功清除所有AI分析数据。汇总：AI消息 {deleted_ai_messages_count} 条，处理步骤 {deleted_steps_count} 条，手动编辑 {deleted_edits_count} 条，处理日志 {deleted_logs_count} 条。")
+            return {
+                "status": "success",
+                "deleted_ai_messages": deleted_ai_messages_count,
+                "deleted_processing_steps": deleted_steps_count,
+                "deleted_manual_edits": deleted_edits_count,
+                "deleted_processing_logs": deleted_logs_count,
+                "message": "已成功清除所有AI分析数据。"
+            }
+        except Exception as inner_e:
+            transaction.rollback()
+            db.rollback()
+            logger.error(f"清除AI分析数据时发生内部错误: {str(inner_e)}\\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"清除AI分析数据时发生内部错误: {str(inner_e)}")
+            
+    except Exception as e:
+        db.rollback() # Ensure rollback on outer exception too
+        logger.error(f"清除AI分析数据失败: {str(e)}\\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"清除AI分析数据失败: {str(e)}") 
