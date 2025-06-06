@@ -78,7 +78,7 @@ def unregister_websocket(websocket):
     """取消注册WebSocket客户端"""
     websocket_clients.discard(websocket)
 
-def setup_logger(name, log_file=None, level=logging.INFO, propagate=True):
+def setup_logger(name, log_file=None, level=logging.WARNING, propagate=True):
     """设置带有控制台和文件输出的日志器"""
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -114,7 +114,7 @@ def configure_logging():
     """配置整个应用的日志系统"""
     # 先设置根日志器
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # 临时设置为DEBUG级别
+    root_logger.setLevel(logging.WARNING)  # 只显示WARNING及以上级别
     
     # 清除现有处理器
     if root_logger.handlers:
@@ -122,7 +122,7 @@ def configure_logging():
     
     # 添加控制台处理器
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)  # 支持DEBUG级别
+    console_handler.setLevel(logging.WARNING)  # 只显示WARNING及以上级别
     console_handler.setFormatter(logging.Formatter(DETAILED_FORMAT))
     root_logger.addHandler(console_handler)
     
@@ -160,7 +160,7 @@ def configure_logging():
     root_logger.addHandler(ws_handler)
     
     # 设置特定模块的日志器
-    setup_logger("Message Logs", "discord.log", level=logging.DEBUG)
+    setup_logger("Message Logs", "discord.log", level=logging.WARNING)
     
     # 返回根日志器，以便在其他地方使用
     return root_logger 
